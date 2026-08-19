@@ -769,10 +769,17 @@ button:disabled {
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.14);
   font-size: 18px;
+  line-height: 1;
+  transition: transform 150ms ease, background-color 150ms ease;
 }
 
 .emoji-picker button:hover {
   background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px) scale(1.1);
+}
+
+.emoji-picker button:active {
+  transform: scale(0.86);
 }
 
 .my-zone {
@@ -847,20 +854,54 @@ button:disabled {
   left: 12px;
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-width: 68px;
-  padding: 6px 8px;
-  border: 1px solid #f4fbff;
-  border-radius: 10px 10px 10px 2px;
-  background: rgba(255, 255, 255, 0.95);
+  gap: 7px;
+  min-width: 96px;
+  padding: 8px 11px 8px 8px;
+  border: 1px solid rgba(244, 251, 255, 0.98);
+  border-radius: 14px 14px 14px 3px;
+  background: rgba(255, 255, 255, 0.97);
   color: #17335f;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
-  box-shadow: 0 4px 10px rgba(2, 15, 55, 0.35);
+  line-height: 1.15;
+  box-shadow: 0 7px 16px rgba(2, 15, 55, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  animation: reaction-bubble-enter 220ms ease-out both, reaction-bubble-glow 900ms ease-in-out 220ms infinite alternate;
 }
 
-.reaction-bubble b {
-  font-size: 18px;
+.reaction-emoji {
+  display: grid;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff0aa;
+  font-size: 30px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 1px rgba(18, 47, 86, 0.2));
+  animation: reaction-emoji-pop 560ms cubic-bezier(0.2, 0.9, 0.25, 1.25) both;
+}
+
+.reaction-label {
+  max-width: 86px;
+  overflow-wrap: anywhere;
+}
+
+@keyframes reaction-bubble-enter {
+  from { opacity: 0; filter: blur(2px); }
+  to { opacity: 1; filter: blur(0); }
+}
+
+@keyframes reaction-bubble-glow {
+  from { box-shadow: 0 7px 16px rgba(2, 15, 55, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.96); }
+  to { box-shadow: 0 9px 20px rgba(2, 15, 55, 0.46), 0 0 0 3px rgba(255, 219, 100, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.98); }
+}
+
+@keyframes reaction-emoji-pop {
+  0% { opacity: 0; transform: scale(0.35) rotate(-18deg); }
+  58% { opacity: 1; transform: scale(1.2) rotate(8deg); }
+  78% { transform: scale(0.92) rotate(-4deg); }
+  100% { transform: scale(1) rotate(0); }
 }
 
 .hand-rack {
@@ -1111,8 +1152,9 @@ button:disabled {
   .my-profile-copy span { width: 58px; font-size: 7px; }
   .my-score { top: -16px; left: 8px; min-width: 42px; padding: 2px 4px; font-size: 14px; }
   .my-score small { font-size: 7px; }
-  .reaction-bubble { bottom: 43px; left: 7px; min-width: 48px; padding: 3px 5px; font-size: 8px; }
-  .reaction-bubble b { font-size: 12px; }
+  .reaction-bubble { bottom: 43px; left: 7px; gap: 4px; min-width: 67px; padding: 4px 6px; border-radius: 8px 8px 8px 2px; font-size: 8px; }
+  .reaction-emoji { width: 24px; height: 24px; font-size: 19px; }
+  .reaction-label { max-width: 48px; }
   .hand-rack { left: 12%; }
   .hand-card .card-corner b { font-size: 18px; }
   .hand-card .card-corner i { font-size: 11px; }
@@ -1500,9 +1542,8 @@ button:disabled {
   z-index: 10;
   bottom: auto;
   left: 16px;
-  min-width: 55px;
-  padding: 4px 6px;
-  transform: translateY(-52px);
+  min-width: 84px;
+  transform: translateY(-62px);
 }
 
 .seat-right .seat-reaction {
@@ -1512,6 +1553,15 @@ button:disabled {
 
 .my-reaction {
   z-index: 40;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reaction-bubble,
+  .reaction-emoji,
+  .emoji-picker button {
+    animation: none;
+    transition: none;
+  }
 }
 
 .round-waiting {
@@ -1693,7 +1743,7 @@ button:disabled {
   .spectator-avatar { width: 17px; height: 17px; font-size: 10px; }
   .spectator-avatars b { font-size: 8px; }
   .room-target-row { margin: 4px 0; }
-  .seat-reaction { left: 6px; padding: 2px 4px; transform: translateY(-38px); }
+  .seat-reaction { left: 6px; min-width: 62px; padding: 3px 5px; transform: translateY(-42px); }
   .seat-right .seat-reaction { right: 6px; }
   .round-waiting { margin-top: 5px; font-size: 8px; }
   .emoji-picker { grid-template-columns: repeat(5, 20px); max-height: 140px; }

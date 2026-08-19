@@ -20,7 +20,19 @@ const REACTIONS = [
   { emoji: "👍", label: "赞" },
   { emoji: "👎", label: "再来" },
   { emoji: "😴", label: "等等" },
-  { emoji: "🍀", label: "好运" }
+  { emoji: "🍀", label: "好运" },
+  { emoji: "🫠", label: "融化了" },
+  { emoji: "🤡", label: "小丑竟是我" },
+  { emoji: "🥴", label: "我晕了" },
+  { emoji: "🤯", label: "脑壳炸了" },
+  { emoji: "🙃", label: "反了反了" },
+  { emoji: "🫥", label: "原地隐身" },
+  { emoji: "🫣", label: "偷偷看牌" },
+  { emoji: "🗿", label: "当场石化" },
+  { emoji: "💥", label: "爆了" },
+  { emoji: "🛸", label: "飞走了" },
+  { emoji: "🧱", label: "稳如砖" },
+  { emoji: "🌀", label: "转圈圈" }
 ];
 
 const AVATAR_ASSET_PREFIX = "/assets/avatars/";
@@ -650,7 +662,12 @@ function renderReactionBubble(state, playerId, className) {
   if (!reaction) {
     return "";
   }
-  return `<div class="reaction-bubble ${className}" role="status"><b>${escapeHtml(reaction.emoji)}</b>${escapeHtml(reaction.label)}</div>`;
+  return `
+    <div class="reaction-bubble ${className}" role="status">
+      <span class="reaction-emoji" aria-hidden="true">${escapeHtml(reaction.emoji)}</span>
+      <span class="reaction-label">${escapeHtml(reaction.label)}</span>
+    </div>
+  `;
 }
 
 function renderProfileSummary(scope) {
