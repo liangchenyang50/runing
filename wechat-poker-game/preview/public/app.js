@@ -26,6 +26,8 @@ const REACTIONS = [
 const AVATARS = ["😀", "😺", "🐼", "🦊", "🐸", "🐯", "🐰", "🦁", "🐻", "🐨", "🐵", "🐧"];
 const PROFILE_KEY = "four-poker-profile-v1";
 const SESSION_KEY = "four-poker-room-session-v1";
+const DEFAULT_PROFILE_NAME = "英雄";
+const LEGACY_DEFAULT_PROFILE_NAME = "玩家";
 const RUNTIME = window.__POKER_RUNTIME__ || {};
 const REALTIME_TRANSPORT = RUNTIME.transport === "websocket" ? "websocket" : "sse";
 const SUPPORTS_SOLO = RUNTIME.supportsSolo !== false;
@@ -50,12 +52,21 @@ function loadProfile() {
   try {
     const stored = JSON.parse(localStorage.getItem(PROFILE_KEY) || "null");
     if (stored && typeof stored === "object") {
-      return normalizeProfile(stored);
+      const normalized = normalizeProfile(stored);
+      if (normalized.name === LEGACY_DEFAULT_PROFILE_NAME) {
+        normalized.name = DEFAULT_PROFILE_NAME;
+        try {
+          localStorage.setItem(PROFILE_KEY, JSON.stringify(normalized));
+        } catch {
+          // The renamed default still applies during this page visit.
+        }
+      }
+      return normalized;
     }
   } catch {
     // A missing or blocked localStorage should not stop local play.
   }
-  return { name: "玩家", avatar: "😀" };
+  return { name: DEFAULT_PROFILE_NAME, avatar: "😀" };
 }
 
 function loadSession() {
@@ -72,7 +83,7 @@ function loadSession() {
 
 function normalizeProfile(source) {
   const rawName = String(source && source.name || "").trim().replace(/\s+/g, " ");
-  const name = Array.from(rawName || "玩家").slice(0, 12).join("");
+  const name = Array.from(rawName || DEFAULT_PROFILE_NAME).slice(0, 12).join("");
   const avatar = source && typeof source.avatar === "string" && source.avatar.trim()
     ? source.avatar.trim()
     : "😀";
@@ -204,7 +215,7 @@ function renderHome() {
   return `
     <section class="setup-screen home-screen">
       <header class="game-header setup-header">
-        <div class="round-sign"><strong>四人扑克</strong><span>联机欢乐牌桌</span></div>
+        <div class="round-sign"><strong>四人扑克</strong><span>跑得快</span></div>
         <button class="header-profile" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(profile.avatar, "header-avatar", profile.name)}<span>${escapeHtml(profile.name)}</span></button>
       </header>
       <div class="setup-deck" aria-hidden="true">
@@ -213,7 +224,7 @@ function renderHome() {
         <span class="setup-card setup-card-three">2</span>
       </div>
       <section class="home-content">
-        <p class="eyebrow">欢乐牌桌</p>
+        <p class="eyebrow home-eyebrow">跑得快</p>
         <h1>创建一桌牌</h1>
         <p class="setup-copy">创建房间后，把六位房间号发给朋友。四人到齐后由房主开局。</p>
         ${renderProfileSummary("home")}
@@ -225,7 +236,6 @@ function renderHome() {
           </div>
           ${SUPPORTS_SOLO ? '<button class="solo-entry" data-action="solo">单人试玩</button>' : ""}
         </div>
-        <p class="rule-note">单张、对子、三张、四张、四张顺子；有牌能接时必须接牌。</p>
       </section>
     </section>
   `;
@@ -285,7 +295,7 @@ function renderLobbySeat(player, isMe) {
 
 function renderGame(state) {
   const seats = getViewerSeats(state);
-  const roomLabel = state.mode === "room" ? `<span>房间 ${escapeHtml(state.roomCode)}</span>` : "<span>欢乐牌桌</span>";
+  const roomLabel = state.mode === "room" ? `<span>房间 ${escapeHtml(state.roomCode)}</span>` : "<span>跑得快</span>";
   return `
     <section class="game-board ${state.phase !== "playing" ? "round-finished" : ""}">
       <header class="game-header">
