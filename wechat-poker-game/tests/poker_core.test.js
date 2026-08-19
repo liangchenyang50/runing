@@ -197,4 +197,28 @@ assert.strictEqual(
   "settlement net balances to zero"
 );
 
+const fractionalPlayers = [
+  { id: 0, name: "A", score: 0.49 },
+  { id: 1, name: "B", score: 1.5 },
+  { id: 2, name: "C", score: 2.49 },
+  { id: 3, name: "D", score: 3.5 }
+];
+rules.roundPlayerScores(fractionalPlayers);
+const roundedSettlement = rules.calculateFinalSettlement(fractionalPlayers);
+assert.deepStrictEqual(
+  fractionalPlayers.map(function score(player) { return player.score; }),
+  [0, 2, 2, 4],
+  "final settlement rounds every player score first"
+);
+assert.deepStrictEqual(
+  roundedSettlement.net.map(function net(item) { return item.score; }),
+  [0, 2, 2, 4],
+  "settlement displays rounded player scores"
+);
+assert.deepStrictEqual(
+  roundedSettlement.net.map(function net(item) { return item.amount; }),
+  [8, 0, 0, -8],
+  "pairwise settlement uses rounded scores"
+);
+
 console.log("four-player poker rules tests passed");

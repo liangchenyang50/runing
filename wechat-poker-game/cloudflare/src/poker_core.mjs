@@ -261,6 +261,7 @@ function playSelected(state) {
       : null;
     if (isMatchOver(state)) {
       state.phase = "gameOver";
+      roundPlayerScoresForFinalSettlement(state);
       state.finalSettlement = calculateFinalSettlement(state);
       state.message = over.message + " 已达到目标分，整场结束。";
     } else {
@@ -407,6 +408,7 @@ function applySpecialDealIfNeeded(state) {
 
   if (isMatchOver(state)) {
     state.phase = "gameOver";
+    roundPlayerScoresForFinalSettlement(state);
     state.finalSettlement = calculateFinalSettlement(state);
     state.message = special.message + " 已达到目标分，整场结束。";
   } else {
@@ -430,6 +432,12 @@ function calculateFinalSettlement(state) {
     return null;
   }
   return rules.calculateFinalSettlement(state.players);
+}
+
+function roundPlayerScoresForFinalSettlement(state) {
+  if (typeof rules.roundPlayerScores === "function") {
+    rules.roundPlayerScores(state.players);
+  }
 }
 
 export {

@@ -408,20 +408,35 @@ function scoreSpecialDeal(state, special) {
   return details;
 }
 
+function roundScoreForFinalSettlement(score) {
+  const numericScore = Number(score);
+  return Number.isFinite(numericScore) ? Math.round(numericScore) : 0;
+}
+
+function roundPlayerScores(players) {
+  for (let index = 0; index < players.length; index += 1) {
+    players[index].score = roundScoreForFinalSettlement(players[index].score);
+  }
+  return players;
+}
+
 function calculateFinalSettlement(players) {
   const entries = [];
   const netByPlayerId = {};
+  const scoreByPlayerId = {};
 
   for (let index = 0; index < players.length; index += 1) {
-    netByPlayerId[players[index].id] = 0;
+    const player = players[index];
+    netByPlayerId[player.id] = 0;
+    scoreByPlayerId[player.id] = roundScoreForFinalSettlement(player.score);
   }
 
   for (let left = 0; left < players.length; left += 1) {
     for (let right = left + 1; right < players.length; right += 1) {
       const a = players[left];
       const b = players[right];
-      const aScore = a.score || 0;
-      const bScore = b.score || 0;
+      const aScore = scoreByPlayerId[a.id];
+      const bScore = scoreByPlayerId[b.id];
       if (aScore === bScore) {
         continue;
       }
@@ -448,7 +463,7 @@ function calculateFinalSettlement(players) {
       return {
         playerId: player.id,
         playerName: player.name,
-        score: player.score || 0,
+        score: scoreByPlayerId[player.id],
         amount: netByPlayerId[player.id]
       };
     })
@@ -480,5 +495,6 @@ export {
   scoreRound,
   findSpecialDeal,
   scoreSpecialDeal,
+  roundPlayerScores,
   calculateFinalSettlement
 };
