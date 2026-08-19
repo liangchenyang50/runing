@@ -54,6 +54,9 @@ let socketReconnectTimer = null;
 let localReaction = null;
 let reactionTimer = null;
 let expiryTimer = null;
+let handToggleQueue = Promise.resolve();
+let pendingHandToggles = 0;
+let handToggleGeneration = 0;
 
 function loadProfile() {
   try {
@@ -117,6 +120,7 @@ function saveSession(nextSession) {
 
 function clearSession() {
   session = null;
+  resetHandToggleQueue();
   try {
     localStorage.removeItem(SESSION_KEY);
   } catch {
@@ -168,6 +172,14 @@ function escapeHtml(value) {
 
 function render(state) {
   currentState = state || { mode: "home" };
+  if (currentState.mode === "room" && currentState.roomClosed) {
+    const closeMessage = currentState.roomCloseMessage || "房间已解散。";
+    clearSession();
+    currentState = { mode: "home" };
+    profileEditorOpen = false;
+    emojiPickerOpen = false;
+    clientNotice = closeMessage;
+  }
   if (currentState.mode === "room" && currentState.active) {
     profileEditorOpen = false;
   }
@@ -247,6 +259,7 @@ function renderHome() {
           ${SUPPORTS_SOLO ? '<button class="solo-entry" data-action="solo">单人试玩</button>' : ""}
         </div>
       </section>
+      ${renderClientNotice()}
     </section>
   `;
 }
@@ -327,7 +340,10 @@ function renderGame(state) {
         ${state.mode === "room"
           ? state.isSpectator
             ? '<button class="restart-control spectator-leave-control" data-action="leave-room" title="退出观战" aria-label="退出观战">×</button>'
-            : `<button class="restart-control room-info-control" data-action="copy-room" title="复制房间号" aria-label="复制房间号">#</button>`
+            : `<div class="room-header-controls">
+                ${state.active ? `<button class="dismiss-control" data-action="request-dismissal" ${state.dismissalVote ? "disabled" : ""}>解散</button>` : ""}
+                <button class="restart-control room-info-control" data-action="copy-room" title="复制房间号" aria-label="复制房间号">#</button>
+              </div>`
           : `<button class="restart-control" data-action="reset" title="${escapeHtml(state.resetLabel)}" aria-label="${escapeHtml(state.resetLabel)}">↻</button>`}
       </header>
 
@@ -339,6 +355,8 @@ function renderGame(state) {
 
       ${renderTableActions(state.tableActions, state.viewerSeat || 0)}
       ${renderFourCardAlerts(state)}
+      ${renderDismissalVote(state)}
+      ${renderDismissalNotice(state)}
       ${renderClientNotice()}
 
       <section class="center-stage">
@@ -476,6 +494,39 @@ function renderFourCardAlerts(state) {
   `;
 }
 
+function renderDismissalVote(state) {
+  const vote = state.dismissalVote;
+  if (!vote || vote.expiresAt <= Date.now()) {
+    return "";
+  }
+  const remaining = formatCountdown(vote.expiresAt - Date.now());
+  const status = vote.canReject
+    ? '<button class="dismiss-reject-button" data-action="reject-dismissal">拒绝解散</button>'
+    : `<em>${vote.isRequester ? "已发起申请，等待其他玩家处理" : "等待其他玩家处理"}</em>`;
+  return `
+    <section class="dismissal-vote" aria-live="assertive" aria-atomic="true">
+      <strong>${escapeHtml(vote.requesterName)} 申请解散房间</strong>
+      <span>剩余 ${remaining}，无人拒绝将自动解散</span>
+      ${status}
+    </section>
+  `;
+}
+
+function renderDismissalNotice(state) {
+  const notice = state.dismissalNotice;
+  if (!notice || notice.expiresAt <= Date.now()) {
+    return "";
+  }
+  return `<div class="dismissal-notice" role="status">${escapeHtml(notice.message)}</div>`;
+}
+
+function formatCountdown(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
 function renderClientNotice() {
   if (!clientNotice) {
     return "";
@@ -564,6 +615,7 @@ function renderHandCard(card, enabled) {
       data-action="toggle"
       data-card-id="${escapeHtml(card.id)}"
       aria-label="${escapeHtml(card.rank + card.suit)}"
+      aria-pressed="${card.selected ? "true" : "false"}"
       ${enabled ? "" : "disabled"}
     >
       ${renderCardFace(card)}
@@ -664,8 +716,7 @@ function syncRoomEvents(state) {
   eventSource = new EventSource(`${roomUrl("/events")}?token=${encodeURIComponent(session.token)}`);
   eventSource.addEventListener("state", (event) => {
     try {
-      clientNotice = "";
-      render(JSON.parse(event.data));
+      handleIncomingRoomState(JSON.parse(event.data));
     } catch {
       // A transient SSE payload will be replaced by the next state event.
     }
@@ -702,8 +753,7 @@ function openRoomSocket(key) {
     try {
       const payload = JSON.parse(event.data);
       if (payload && payload.type === "state" && payload.state) {
-        clientNotice = "";
-        render(payload.state);
+        handleIncomingRoomState(payload.state);
       }
     } catch {
       // The next room state will replace an incomplete WebSocket payload.
@@ -729,19 +779,97 @@ function openRoomSocket(key) {
   });
 }
 
+function handleIncomingRoomState(nextState) {
+  if (nextState && nextState.roomClosed) {
+    resetHandToggleQueue();
+    clientNotice = "";
+    render(nextState);
+    return;
+  }
+  if (pendingHandToggles > 0) {
+    return;
+  }
+  clientNotice = "";
+  render(nextState);
+}
+
 function scheduleReactionExpiry(state) {
   if (expiryTimer) {
     clearTimeout(expiryTimer);
     expiryTimer = null;
   }
-  const expiryTimes = [...(state.reactions || []), ...(state.alerts || [])]
+  const expiryTimes = [
+    ...(state.reactions || []),
+    ...(state.alerts || []),
+    state.dismissalVote,
+    state.dismissalNotice
+  ]
+    .filter(Boolean)
     .map((item) => item.expiresAt)
     .filter((expiresAt) => Number.isFinite(expiresAt) && expiresAt > Date.now());
+  if (state.dismissalVote && state.dismissalVote.expiresAt > Date.now()) {
+    expiryTimes.push(Math.min(state.dismissalVote.expiresAt, Date.now() + 1000));
+  }
   if (expiryTimes.length === 0) {
     return;
   }
   const nextExpiry = Math.min(...expiryTimes);
   expiryTimer = window.setTimeout(() => render(currentState), Math.max(50, nextExpiry - Date.now() + 60));
+}
+
+function resetHandToggleQueue() {
+  handToggleGeneration += 1;
+  pendingHandToggles = 0;
+  handToggleQueue = Promise.resolve();
+}
+
+function toggleHandCard(element, state) {
+  if (!state || !state.active || !state.myTurn) {
+    return;
+  }
+  const cardId = element.dataset.cardId;
+  const viewerSeat = Number.isInteger(state.viewerSeat) ? state.viewerSeat : 0;
+  const player = (state.players || []).find((item) => item && item.id === viewerSeat);
+  const card = player && (player.hand || []).find((item) => item.id === cardId);
+  if (!card) {
+    return;
+  }
+
+  card.selected = !card.selected;
+  element.classList.toggle("selected-card", card.selected);
+  element.setAttribute("aria-pressed", String(card.selected));
+  const generation = handToggleGeneration;
+  pendingHandToggles += 1;
+
+  const runToggle = async () => {
+    if (generation !== handToggleGeneration) {
+      return;
+    }
+    try {
+      currentState = state.mode === "room"
+        ? await roomApi("/action", { action: "toggle", cardId })
+        : await soloApi("/api/toggle", { cardId });
+    } catch (error) {
+      clientNotice = error.message || "点牌没有完成，请重试。";
+      if (state.mode === "room" && session) {
+        try {
+          currentState = await requestJson(roomStateUrl());
+        } catch {
+          // The next room event will restore an authoritative state.
+        }
+      }
+    } finally {
+      if (generation !== handToggleGeneration) {
+        return;
+      }
+      pendingHandToggles = Math.max(0, pendingHandToggles - 1);
+      if (pendingHandToggles === 0) {
+        render(currentState);
+      }
+    }
+  };
+
+  handToggleQueue = handToggleQueue.then(runToggle, runToggle);
 }
 
 function openProfileEditor() {
@@ -854,6 +982,10 @@ function bindEvents(state) {
         }
         if (action === "save-profile") {
           await saveCurrentProfile();
+          return;
+        }
+        if (action === "toggle") {
+          toggleHandCard(element, state);
           return;
         }
         if (action === "toggle-emoji") {

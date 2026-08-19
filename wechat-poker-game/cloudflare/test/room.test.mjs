@@ -61,6 +61,25 @@ describe("Cloudflare room service", () => {
     });
     expect(lockedProfile.response.status).toBe(409);
 
+    const requestedDismissal = await post(`/api/rooms/${roomCode}/action`, {
+      token: host.session.token,
+      action: "request-dismissal"
+    });
+    expect(requestedDismissal.dismissalVote).toEqual(expect.objectContaining({
+      requestedBy: host.session.seat,
+      canReject: false
+    }));
+
+    const guestVoteState = await stateFor(roomCode, second.session.token);
+    expect(guestVoteState.dismissalVote).toEqual(expect.objectContaining({ canReject: true }));
+
+    const rejectedDismissal = await post(`/api/rooms/${roomCode}/action`, {
+      token: second.session.token,
+      action: "reject-dismissal"
+    });
+    expect(rejectedDismissal.dismissalVote).toBeNull();
+    expect(rejectedDismissal.dismissalNotice.message).toContain("拒绝解散");
+
     let playable = started;
     for (let attempt = 0; attempt < 3 && playable.phase !== "playing"; attempt += 1) {
       playable = await post(`/api/rooms/${roomCode}/action`, {

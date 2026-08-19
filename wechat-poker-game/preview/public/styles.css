@@ -163,6 +163,30 @@ button:disabled {
   line-height: 1;
 }
 
+.room-header-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.dismiss-control {
+  min-width: 48px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 220, 175, 0.78);
+  border-radius: 6px;
+  background: rgba(136, 48, 42, 0.88);
+  color: #fff4df;
+  font-size: 12px;
+  font-weight: 850;
+  text-shadow: 0 1px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.25), 0 2px 5px rgba(1, 16, 58, 0.34);
+}
+
+.dismiss-control:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 .seat {
   position: absolute;
   z-index: 7;
@@ -495,7 +519,8 @@ button:disabled {
 }
 
 .four-card-alerts,
-.client-notice {
+.client-notice,
+.dismissal-notice {
   position: absolute;
   z-index: 18;
   left: 50%;
@@ -535,6 +560,67 @@ button:disabled {
   font-weight: 700;
   line-height: 1.35;
   box-shadow: 0 2px 8px rgba(0, 12, 49, 0.28);
+}
+
+.dismissal-notice {
+  top: 56%;
+  padding: 8px 12px;
+  border: 1px solid rgba(170, 241, 207, 0.78);
+  border-radius: 8px;
+  background: rgba(24, 102, 71, 0.92);
+  color: #edfff5;
+  font-size: 13px;
+  font-weight: 850;
+  box-shadow: 0 3px 10px rgba(2, 13, 48, 0.34);
+}
+
+.dismissal-vote {
+  position: absolute;
+  z-index: 24;
+  top: 16%;
+  left: 50%;
+  display: grid;
+  width: min(48%, 380px);
+  justify-items: center;
+  gap: 4px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 222, 154, 0.9);
+  border-radius: 8px;
+  background: rgba(67, 31, 74, 0.92);
+  color: #fff7df;
+  transform: translateX(-50%);
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(2, 13, 48, 0.42);
+}
+
+.dismissal-vote strong {
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.dismissal-vote span,
+.dismissal-vote em {
+  color: #f5dfad;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.dismiss-reject-button {
+  min-width: 94px;
+  height: 31px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  border-radius: 16px;
+  background: #d55d3e;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.32), inset 0 -2px rgba(0, 0, 0, 0.16);
+}
+
+.dismiss-reject-button:hover {
+  filter: brightness(1.1);
 }
 
 .result-panel {
@@ -795,7 +881,16 @@ button:disabled {
   aspect-ratio: 0.66;
   margin: 0;
   padding: 0;
-  transition: transform 150ms ease, box-shadow 150ms ease;
+  transform: translate3d(0, 0, 0);
+  transition: transform 150ms cubic-bezier(0.2, 0.75, 0.25, 1), box-shadow 150ms ease, border-color 120ms ease;
+  will-change: transform;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hand-card:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .hand-card + .hand-card {
@@ -811,7 +906,7 @@ button:disabled {
 .hand-card.selected-card {
   z-index: 35;
   border: 3px solid #ffd05c;
-  transform: translateY(-17px);
+  transform: translate3d(0, -17px, 0) scale(1.015);
   box-shadow: 0 7px 13px rgba(2, 18, 59, 0.55);
 }
 
@@ -961,6 +1056,8 @@ button:disabled {
   .table-title { font-size: 14px; }
   .table-title span { font-size: 9px; }
   .restart-control { width: 29px; height: 29px; font-size: 20px; }
+  .room-header-controls { gap: 4px; }
+  .dismiss-control { min-width: 36px; height: 29px; padding: 0 5px; font-size: 9px; }
   .seat { min-width: 116px; min-height: 47px; }
   .avatar { width: 42px; height: 42px; border-width: 2px; border-radius: 5px; font-size: 16px; }
   .seat-copy { min-width: 56px; margin-left: 4px; padding: 3px 4px; }
@@ -989,6 +1086,12 @@ button:disabled {
   .table-card .card-pip { bottom: 4px; font-size: 20px; }
   .four-card-alert { padding: 5px 8px; font-size: 9px; }
   .client-notice { padding: 5px 8px; font-size: 9px; }
+  .dismissal-notice { padding: 5px 8px; font-size: 9px; }
+  .dismissal-vote { top: 15%; gap: 3px; padding: 5px 8px; }
+  .dismissal-vote strong { font-size: 10px; }
+  .dismissal-vote span,
+  .dismissal-vote em { font-size: 8px; }
+  .dismiss-reject-button { min-width: 68px; height: 24px; padding: 0 8px; font-size: 10px; }
   .panel-title { font-size: 10px; }
   .score-line { font-size: 8px; }
   .round-continue { min-width: 104px; height: 29px; margin-top: 5px; padding: 0 13px; border-width: 1px; font-size: 12px; }
@@ -1713,6 +1816,16 @@ button:disabled {
   .center-stage {
     top: 52%;
     width: min(88%, 340px);
+  }
+
+  .dismissal-vote {
+    top: 16%;
+    width: min(86%, 390px);
+  }
+
+  .dismissal-notice {
+    top: 59%;
+    width: min(88%, 360px);
   }
 
   .action-dock {

@@ -7,6 +7,8 @@ const MAX_ROOM_AGE_MS = 1000 * 60 * 60 * 24;
 const MAX_AVATAR_DATA_LENGTH = 320000;
 const MAX_NAME_LENGTH = 12;
 const FOUR_CARD_ALERT_MS = 4500;
+const DISMISSAL_VOTE_MS = 1000 * 60 * 2;
+const DISMISSAL_NOTICE_MS = 4500;
 const AVATAR_ASSET_RE = /^\/assets\/avatars\/portrait-[1-4]\.jpg$/;
 const MAX_SPECTATORS = 24;
 
@@ -19,8 +21,9 @@ class RoomError extends Error {
   }
 }
 
-export function createRoomService({ poker, rules }) {
+export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VOTE_MS, dismissalNoticeMs = DISMISSAL_NOTICE_MS }) {
   const rooms = new Map();
+  const dismissalTimers = new Map();
 
   function createRoom(profileInput) {
     removeExpiredRooms();
@@ -36,6 +39,8 @@ export function createRoomService({ poker, rules }) {
       reactions: new Map(),
       fourCardAlerts: [],
       fourCardWarnedSeats: new Set(),
+      dismissalVote: null,
+      dismissalNotice: null,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -68,7 +73,12 @@ export function createRoomService({ poker, rules }) {
     if (!ROOM_CODE_RE.test(code) || !rooms.has(code)) {
       throw new RoomError("房间不存在或已经失效。", 404, "room_not_found");
     }
-    return rooms.get(code);
+    const room = rooms.get(code);
+    if (hasExpiredDismissalVote(room)) {
+      dissolveRoom(room, "解散投票期间无人拒绝，房间已解散。");
+      throw new RoomError("房间已解散。", 410, "room_dissolved");
+    }
+    return room;
   }
 
   function getMember(room, token) {
@@ -118,6 +128,7 @@ export function createRoomService({ poker, rules }) {
     const now = Date.now();
     for (const [code, room] of rooms) {
       if (room.listeners.size === 0 && now - room.updatedAt > MAX_ROOM_AGE_MS) {
+        clearDismissalTimer(room.code);
         rooms.delete(code);
       }
     }
@@ -163,6 +174,7 @@ export function createRoomService({ poker, rules }) {
       playerNames: room.players.map((player) => player.name)
     });
     resetFourCardWarnings(room);
+    clearDismissalVote(room);
     touch(room);
     broadcast(room);
   }
@@ -220,6 +232,7 @@ export function createRoomService({ poker, rules }) {
     if (room.players.some(Boolean)) {
       broadcast(room);
     } else {
+      clearDismissalTimer(room.code);
       rooms.delete(room.code);
     }
   }
@@ -265,6 +278,14 @@ export function createRoomService({ poker, rules }) {
       throw new RoomError("观战中不能操作牌局。", 403, "spectator_readonly");
     }
     const action = body && body.action;
+    if (action === "request-dismissal") {
+      requestDismissal(room, member);
+      return;
+    }
+    if (action === "reject-dismissal") {
+      rejectDismissal(room, member);
+      return;
+    }
     if (action === "next-round") {
       ensureHost(member);
       advanceRound(room);
@@ -358,6 +379,101 @@ export function createRoomService({ poker, rules }) {
     broadcast(room);
   }
 
+  function requestDismissal(room, member) {
+    if (!room.game) {
+      throw new RoomError("牌局开始后才能申请解散。", 409, "game_not_started");
+    }
+    if (room.dismissalVote) {
+      throw new RoomError("已有解散申请正在等待处理。", 409, "dismissal_pending");
+    }
+    const requestedAt = Date.now();
+    room.dismissalNotice = null;
+    room.dismissalVote = {
+      requestedBy: member.seat,
+      requesterName: member.name,
+      requestedAt,
+      expiresAt: requestedAt + dismissalVoteMs
+    };
+    scheduleDismissalTimer(room);
+    touch(room);
+    broadcast(room);
+  }
+
+  function rejectDismissal(room, member) {
+    const vote = room.dismissalVote;
+    if (!vote) {
+      throw new RoomError("当前没有待处理的解散申请。", 409, "dismissal_not_pending");
+    }
+    if (vote.requestedBy === member.seat) {
+      throw new RoomError("发起人不能拒绝自己的解散申请。", 409, "dismissal_requester_cannot_reject");
+    }
+    clearDismissalVote(room);
+    room.dismissalNotice = {
+      message: `${member.name} 已拒绝解散，游戏继续。`,
+      expiresAt: Date.now() + dismissalNoticeMs
+    };
+    touch(room);
+    broadcast(room);
+  }
+
+  function scheduleDismissalTimer(room) {
+    clearDismissalTimer(room.code);
+    const vote = room.dismissalVote;
+    if (!vote) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      const activeRoom = rooms.get(room.code);
+      if (!activeRoom || activeRoom.dismissalVote !== vote || !hasExpiredDismissalVote(activeRoom)) {
+        return;
+      }
+      dissolveRoom(activeRoom, "解散投票期间无人拒绝，房间已解散。");
+    }, Math.max(0, vote.expiresAt - Date.now()) + 10);
+    timer.unref?.();
+    dismissalTimers.set(room.code, timer);
+  }
+
+  function clearDismissalVote(room) {
+    room.dismissalVote = null;
+    clearDismissalTimer(room.code);
+  }
+
+  function clearDismissalTimer(roomCode) {
+    const timer = dismissalTimers.get(roomCode);
+    if (timer) {
+      clearTimeout(timer);
+      dismissalTimers.delete(roomCode);
+    }
+  }
+
+  function hasExpiredDismissalVote(room) {
+    return Boolean(room && room.dismissalVote && room.dismissalVote.expiresAt <= Date.now());
+  }
+
+  function dissolveRoom(room, message) {
+    if (!rooms.has(room.code)) {
+      return;
+    }
+    clearDismissalVote(room);
+    room.dismissalNotice = {
+      message,
+      expiresAt: Date.now() + dismissalNoticeMs
+    };
+    room.roomClosed = true;
+    room.roomCloseMessage = message;
+    touch(room);
+    broadcast(room);
+    for (const listener of room.listeners) {
+      try {
+        listener.res.end();
+      } catch {
+        // A closed SSE stream needs no further cleanup.
+      }
+    }
+    room.listeners.clear();
+    rooms.delete(room.code);
+  }
+
   function resetFourCardWarnings(room) {
     room.fourCardAlerts = [];
     room.fourCardWarnedSeats = new Set();
@@ -395,6 +511,7 @@ export function createRoomService({ poker, rules }) {
   function viewRoom(room, member) {
     removeExpiredReactions(room);
     removeExpiredFourCardAlerts(room);
+    removeExpiredDismissalNotice(room);
     const game = room.game;
     const isSpectator = member.role === "spectator";
     const viewerSeat = isSpectator ? null : member.seat;
@@ -427,6 +544,10 @@ export function createRoomService({ poker, rules }) {
       turnCount: game ? game.turnCount : 0,
       specialDeal: game ? game.specialDeal : null,
       winnerId: game ? game.winnerId : null,
+      roomClosed: room.roomClosed === true,
+      roomCloseMessage: room.roomCloseMessage || "",
+      dismissalVote: presentDismissalVote(room, member),
+      dismissalNotice: room.dismissalNotice ? { ...room.dismissalNotice } : null,
       spectatorCount: room.spectators.size,
       spectators: Array.from(room.spectators.values()).map((spectator) => ({
         name: spectator.name,
@@ -532,6 +653,27 @@ export function createRoomService({ poker, rules }) {
     room.fourCardAlerts = (room.fourCardAlerts || []).filter((alert) => alert.expiresAt > now);
   }
 
+  function removeExpiredDismissalNotice(room) {
+    if (room.dismissalNotice && room.dismissalNotice.expiresAt <= Date.now()) {
+      room.dismissalNotice = null;
+    }
+  }
+
+  function presentDismissalVote(room, member) {
+    const vote = room.dismissalVote;
+    if (!vote || vote.expiresAt <= Date.now()) {
+      return null;
+    }
+    return {
+      requesterName: vote.requesterName,
+      requestedBy: vote.requestedBy,
+      requestedAt: vote.requestedAt,
+      expiresAt: vote.expiresAt,
+      isRequester: member.role === "player" && member.seat === vote.requestedBy,
+      canReject: member.role === "player" && member.seat !== vote.requestedBy
+    };
+  }
+
   function sessionFor(room, member) {
     return {
       roomCode: room.code,
@@ -544,6 +686,7 @@ export function createRoomService({ poker, rules }) {
   function broadcast(room) {
     removeExpiredReactions(room);
     removeExpiredFourCardAlerts(room);
+    removeExpiredDismissalNotice(room);
     for (const listener of room.listeners) {
       const member = room.players.find((player) => player && player.token === listener.token)
         || room.spectators.get(listener.token);

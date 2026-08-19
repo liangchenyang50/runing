@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createPreviewServer } from "../preview/server.mjs";
 
-const server = createPreviewServer();
+const server = createPreviewServer({ dismissalVoteMs: 300 });
 await new Promise((resolve, reject) => {
   server.once("error", reject);
   server.listen(0, "127.0.0.1", () => {
@@ -103,6 +103,23 @@ try {
   });
   assert.equal(lockedProfile.response.status, 409, "player profiles lock once a room starts");
 
+  const requestedDismissal = await post(`/api/rooms/${roomCode}/action`, {
+    token: host.session.token,
+    action: "request-dismissal"
+  });
+  assert.equal(requestedDismissal.dismissalVote.requestedBy, host.session.seat, "a player can start a room dismissal vote");
+  assert.equal(requestedDismissal.dismissalVote.canReject, false, "the requester cannot reject their own vote");
+
+  const guestVoteState = await getState(roomCode, second.session.token);
+  assert.equal(guestVoteState.dismissalVote.canReject, true, "another seated player can reject the dismissal vote");
+
+  const rejectedDismissal = await post(`/api/rooms/${roomCode}/action`, {
+    token: second.session.token,
+    action: "reject-dismissal"
+  });
+  assert.equal(rejectedDismissal.dismissalVote, null, "one rejection cancels the dismissal vote");
+  assert.match(rejectedDismissal.dismissalNotice.message, /拒绝解散/, "the room announces that play continues after a rejection");
+
   let playingState = started;
   for (let attempt = 0; attempt < 3 && playingState.phase !== "playing"; attempt += 1) {
     playingState = await post(`/api/rooms/${roomCode}/action`, {
@@ -164,6 +181,20 @@ try {
   assert.equal(left.left, true, "a lobby player can leave and release their seat");
   const leaveState = await getState(leaveLobby.session.roomCode, leaveLobby.session.token);
   assert.equal(leaveState.playerCount, 1, "leaving removes the player from the lobby");
+
+  const dissolvingRoom = await post("/api/rooms", { profile: { name: "投票房主", avatar: "😀" } });
+  const dissolvingCode = dissolvingRoom.session.roomCode;
+  await post(`/api/rooms/${dissolvingCode}/join`, { profile: { name: "投票左家", avatar: "🐼" } });
+  await post(`/api/rooms/${dissolvingCode}/join`, { profile: { name: "投票对家", avatar: "🦊" } });
+  await post(`/api/rooms/${dissolvingCode}/join`, { profile: { name: "投票右家", avatar: "🐯" } });
+  await post(`/api/rooms/${dissolvingCode}/start`, { token: dissolvingRoom.session.token });
+  await post(`/api/rooms/${dissolvingCode}/action`, {
+    token: dissolvingRoom.session.token,
+    action: "request-dismissal"
+  });
+  await new Promise((resolve) => setTimeout(resolve, 380));
+  const dissolvedState = await request(`/api/rooms/${dissolvingCode}/state?token=${dissolvingRoom.session.token}`);
+  assert.equal(dissolvedState.response.status, 404, "a vote without rejection dissolves the room after its deadline");
 
   console.log("room server test passed");
 } finally {

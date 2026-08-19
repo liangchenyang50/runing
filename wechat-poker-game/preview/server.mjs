@@ -30,12 +30,12 @@ const mimeTypes = {
   ".gif": "image/gif"
 };
 
-export function createPreviewApp() {
+export function createPreviewApp(options = {}) {
   let selectedTargetScore = 100;
   let state = null;
   let fourCardAlerts = [];
   let fourCardWarnedPlayerIds = new Set();
-  const roomService = createRoomService({ poker, rules });
+  const roomService = createRoomService({ poker, rules, ...options });
 
   function runAutoPlayers() {
     let guard = 0;
@@ -334,8 +334,8 @@ export function createPreviewApp() {
   };
 }
 
-export function createPreviewServer() {
-  const app = createPreviewApp();
+export function createPreviewServer(options = {}) {
+  const app = createPreviewApp(options);
   return createServer(app.handle);
 }
 

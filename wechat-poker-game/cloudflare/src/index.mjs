@@ -8,6 +8,8 @@ const MAX_ROOM_AGE_MS = 1000 * 60 * 60 * 24;
 const MAX_AVATAR_DATA_LENGTH = 320000;
 const MAX_NAME_LENGTH = 12;
 const FOUR_CARD_ALERT_MS = 4500;
+const DISMISSAL_VOTE_MS = 1000 * 60 * 2;
+const DISMISSAL_NOTICE_MS = 4500;
 const AVATAR_ASSET_RE = /^\/assets\/avatars\/portrait-[1-4]\.jpg$/;
 const MAX_SPECTATORS = 24;
 
@@ -74,6 +76,8 @@ export class PokerRoom extends DurableObject {
         reactions: [],
         fourCardAlerts: [],
         fourCardWarnedSeats: [],
+        dismissalVote: null,
+        dismissalNotice: null,
         createdAt: now,
         updatedAt: now
       };
@@ -87,7 +91,7 @@ export class PokerRoom extends DurableObject {
 
   async join(profileInput) {
     return this.asResult(async () => {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const seat = room.players.findIndex((player) => player === null);
       if (room.game || seat === -1) {
         room.spectators = room.spectators || [];
@@ -116,7 +120,7 @@ export class PokerRoom extends DurableObject {
 
   async getState(token) {
     return this.asResult(async () => {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const member = getMember(room, token);
       return this.viewRoom(member);
     });
@@ -124,7 +128,7 @@ export class PokerRoom extends DurableObject {
 
   async start(token) {
     return this.asResult(async () => {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const member = getMember(room, token);
       ensureHost(member);
       if (!room.players.every(Boolean)) {
@@ -146,7 +150,7 @@ export class PokerRoom extends DurableObject {
 
   async setTarget(token, score) {
     return this.asResult(async () => {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const member = getMember(room, token);
       ensureHost(member);
       if (room.game) {
@@ -165,7 +169,7 @@ export class PokerRoom extends DurableObject {
 
   async updateProfile(token, profileInput) {
     return this.asResult(async () => {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const member = getMember(room, token);
       if (room.game) {
         throw new RoomError("牌局开始后不能更改昵称或头像。", 409, "profile_locked");
@@ -184,7 +188,7 @@ export class PokerRoom extends DurableObject {
 
   async action(token, body) {
     return this.asResult(async () => {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const member = getMember(room, token);
       if (member.role === "spectator") {
         throw new RoomError("观战中不能操作牌局。", 403, "spectator_readonly");
@@ -193,6 +197,10 @@ export class PokerRoom extends DurableObject {
       if (action === "next-round") {
         ensureHost(member);
         advanceRound(room);
+      } else if (action === "request-dismissal") {
+        requestDismissal(room, member);
+      } else if (action === "reject-dismissal") {
+        rejectDismissal(room, member);
       } else if (action === "reaction") {
         setReaction(room, member, body.emoji, body.label);
       } else {
@@ -206,7 +214,7 @@ export class PokerRoom extends DurableObject {
 
   async leave(token) {
     return this.asResult(async () => {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const member = getMember(room, token);
       if (member.role === "spectator") {
         room.spectators = (room.spectators || []).filter((spectator) => spectator.token !== member.token);
@@ -247,7 +255,7 @@ export class PokerRoom extends DurableObject {
       return json({ error: "upgrade_required", message: "请使用 WebSocket 连接房间。" }, 426);
     }
     try {
-      const room = this.requireRoom();
+      const room = await this.requireActiveRoom();
       const token = new URL(request.url).searchParams.get("token") || "";
       const member = getMember(room, token);
       const [client, server] = Object.values(new WebSocketPair());
@@ -267,6 +275,10 @@ export class PokerRoom extends DurableObject {
       socket.close(1008, "房间已失效");
       return;
     }
+    if (hasExpiredDismissalVote(this.room)) {
+      await this.dissolveRoom("解散投票期间无人拒绝，房间已解散。");
+      return;
+    }
     const member = memberForSocket(this.room, socket);
     if (!member) {
       socket.close(1008, "房间身份已失效");
@@ -284,12 +296,17 @@ export class PokerRoom extends DurableObject {
     if (!this.room) {
       return;
     }
+    if (hasExpiredDismissalVote(this.room)) {
+      await this.dissolveRoom("解散投票期间无人拒绝，房间已解散。");
+      return;
+    }
     if (Date.now() - this.room.updatedAt < MAX_ROOM_AGE_MS) {
-      await this.ctx.storage.setAlarm(this.room.updatedAt + MAX_ROOM_AGE_MS);
+      await this.scheduleAlarm();
       return;
     }
     if (this.ctx.getWebSockets().length > 0) {
-      await this.ctx.storage.setAlarm(Date.now() + MAX_ROOM_AGE_MS);
+      this.room.updatedAt = Date.now();
+      await this.persist();
       return;
     }
     this.room = null;
@@ -312,8 +329,18 @@ export class PokerRoom extends DurableObject {
     return this.room;
   }
 
+  async requireActiveRoom() {
+    const room = this.requireRoom();
+    if (hasExpiredDismissalVote(room)) {
+      await this.dissolveRoom("解散投票期间无人拒绝，房间已解散。");
+      throw new RoomError("房间已解散。", 410, "room_dissolved");
+    }
+    return room;
+  }
+
   async commit() {
     removeExpiredFourCardAlerts(this.room);
+    removeExpiredDismissalNotice(this.room);
     this.room.updatedAt = Date.now();
     await this.persist();
   }
@@ -323,7 +350,37 @@ export class PokerRoom extends DurableObject {
       delete this.room.game.rng;
     }
     await this.ctx.storage.put("room", this.room);
-    await this.ctx.storage.setAlarm(this.room.updatedAt + MAX_ROOM_AGE_MS);
+    await this.scheduleAlarm();
+  }
+
+  async scheduleAlarm() {
+    if (!this.room) {
+      return;
+    }
+    const roomExpiry = this.room.updatedAt + MAX_ROOM_AGE_MS;
+    const voteExpiry = this.room.dismissalVote && this.room.dismissalVote.expiresAt > Date.now()
+      ? this.room.dismissalVote.expiresAt
+      : null;
+    await this.ctx.storage.setAlarm(voteExpiry == null ? roomExpiry : Math.min(roomExpiry, voteExpiry));
+  }
+
+  async dissolveRoom(message) {
+    const room = this.room;
+    if (!room) {
+      return;
+    }
+    room.dismissalVote = null;
+    room.dismissalNotice = {
+      message,
+      expiresAt: Date.now() + DISMISSAL_NOTICE_MS
+    };
+    room.roomClosed = true;
+    room.roomCloseMessage = message;
+    this.broadcast();
+    this.closeSockets(1000, "房间已解散");
+    this.room = null;
+    await this.ctx.storage.delete("room");
+    await this.ctx.storage.deleteAlarm();
   }
 
   viewRoom(member) {
@@ -360,6 +417,12 @@ export class PokerRoom extends DurableObject {
       turnCount: game ? game.turnCount : 0,
       specialDeal: game ? game.specialDeal : null,
       winnerId: game ? game.winnerId : null,
+      roomClosed: room.roomClosed === true,
+      roomCloseMessage: room.roomCloseMessage || "",
+      dismissalVote: presentDismissalVote(room, member),
+      dismissalNotice: room.dismissalNotice && room.dismissalNotice.expiresAt > Date.now()
+        ? { ...room.dismissalNotice }
+        : null,
       spectatorCount: (room.spectators || []).length,
       spectators: (room.spectators || []).map((spectator) => ({
         name: spectator.name,
@@ -560,6 +623,38 @@ function setReaction(room, member, emoji, label) {
   }
 }
 
+function requestDismissal(room, member) {
+  if (!room.game) {
+    throw new RoomError("牌局开始后才能申请解散。", 409, "game_not_started");
+  }
+  if (room.dismissalVote) {
+    throw new RoomError("已有解散申请正在等待处理。", 409, "dismissal_pending");
+  }
+  const requestedAt = Date.now();
+  room.dismissalNotice = null;
+  room.dismissalVote = {
+    requestedBy: member.seat,
+    requesterName: member.name,
+    requestedAt,
+    expiresAt: requestedAt + DISMISSAL_VOTE_MS
+  };
+}
+
+function rejectDismissal(room, member) {
+  const vote = room.dismissalVote;
+  if (!vote) {
+    throw new RoomError("当前没有待处理的解散申请。", 409, "dismissal_not_pending");
+  }
+  if (vote.requestedBy === member.seat) {
+    throw new RoomError("发起人不能拒绝自己的解散申请。", 409, "dismissal_requester_cannot_reject");
+  }
+  room.dismissalVote = null;
+  room.dismissalNotice = {
+    message: `${member.name} 已拒绝解散，游戏继续。`,
+    expiresAt: Date.now() + DISMISSAL_NOTICE_MS
+  };
+}
+
 function resetFourCardWarnings(room) {
   room.fourCardAlerts = [];
   room.fourCardWarnedSeats = [];
@@ -593,6 +688,31 @@ function removeExpiredFourCardAlerts(room) {
   }
   const now = Date.now();
   room.fourCardAlerts = (room.fourCardAlerts || []).filter((alert) => alert.expiresAt > now);
+}
+
+function removeExpiredDismissalNotice(room) {
+  if (room && room.dismissalNotice && room.dismissalNotice.expiresAt <= Date.now()) {
+    room.dismissalNotice = null;
+  }
+}
+
+function hasExpiredDismissalVote(room) {
+  return Boolean(room && room.dismissalVote && room.dismissalVote.expiresAt <= Date.now());
+}
+
+function presentDismissalVote(room, member) {
+  const vote = room && room.dismissalVote;
+  if (!vote || vote.expiresAt <= Date.now()) {
+    return null;
+  }
+  return {
+    requesterName: vote.requesterName,
+    requestedBy: vote.requestedBy,
+    requestedAt: vote.requestedAt,
+    expiresAt: vote.expiresAt,
+    isRequester: member.role === "player" && member.seat === vote.requestedBy,
+    canReject: member.role === "player" && member.seat !== vote.requestedBy
+  };
 }
 
 function createMember(seat, profileInput) {
