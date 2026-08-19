@@ -6,6 +6,9 @@ const ROOM_CODE_RE = /^\d{6}$/;
 const MAX_ROOM_AGE_MS = 1000 * 60 * 60 * 24;
 const MAX_AVATAR_DATA_LENGTH = 320000;
 const MAX_NAME_LENGTH = 12;
+const FOUR_CARD_ALERT_MS = 4500;
+const AVATAR_ASSET_RE = /^\/assets\/avatars\/portrait-[1-4]\.jpg$/;
+const MAX_SPECTATORS = 24;
 
 class RoomError extends Error {
   constructor(message, status = 400, code = "room_error") {
@@ -27,9 +30,12 @@ export function createRoomService({ poker, rules }) {
       code: roomCode,
       targetScore: 100,
       players: [member, null, null, null],
+      spectators: new Map(),
       game: null,
       listeners: new Set(),
       reactions: new Map(),
+      fourCardAlerts: [],
+      fourCardWarnedSeats: new Set(),
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -39,12 +45,16 @@ export function createRoomService({ poker, rules }) {
 
   function joinRoom(roomCode, profileInput) {
     const room = getRoom(roomCode);
-    if (room.game) {
-      throw new RoomError("牌局已经开始，不能再加入。", 409, "game_started");
-    }
     const seat = room.players.findIndex((player) => player === null);
-    if (seat === -1) {
-      throw new RoomError("房间已经满员。", 409, "room_full");
+    if (room.game || seat === -1) {
+      if (room.spectators.size >= MAX_SPECTATORS) {
+        throw new RoomError("观战席已满，请稍后再试。", 409, "spectator_full");
+      }
+      const spectator = createSpectator(profileInput);
+      room.spectators.set(spectator.token, spectator);
+      touch(room);
+      broadcast(room);
+      return { room, member: spectator };
     }
     const member = createMember(seat, profileInput);
     room.players[seat] = member;
@@ -62,7 +72,8 @@ export function createRoomService({ poker, rules }) {
   }
 
   function getMember(room, token) {
-    const member = room.players.find((player) => player && player.token === token);
+    const member = room.players.find((player) => player && player.token === token)
+      || room.spectators.get(token);
     if (!member) {
       throw new RoomError("房间身份已失效，请重新加入。", 403, "invalid_session");
     }
@@ -72,7 +83,20 @@ export function createRoomService({ poker, rules }) {
   function createMember(seat, profileInput) {
     const profile = normalizeProfile(profileInput, seat);
     return {
+      role: "player",
       seat,
+      token: randomBytes(24).toString("hex"),
+      name: profile.name,
+      avatar: profile.avatar,
+      joinedAt: Date.now()
+    };
+  }
+
+  function createSpectator(profileInput) {
+    const profile = normalizeProfile(profileInput, 0);
+    return {
+      role: "spectator",
+      seat: null,
       token: randomBytes(24).toString("hex"),
       name: profile.name,
       avatar: profile.avatar,
@@ -117,6 +141,9 @@ export function createRoomService({ poker, rules }) {
     if (!trimmed) {
       return fallback;
     }
+    if (AVATAR_ASSET_RE.test(trimmed)) {
+      return trimmed;
+    }
     if (/^data:image\/(png|jpeg|webp|gif);base64,/i.test(trimmed)) {
       return trimmed.length <= MAX_AVATAR_DATA_LENGTH ? trimmed : fallback;
     }
@@ -135,6 +162,7 @@ export function createRoomService({ poker, rules }) {
       targetScore: room.targetScore,
       playerNames: room.players.map((player) => player.name)
     });
+    resetFourCardWarnings(room);
     touch(room);
     broadcast(room);
   }
@@ -154,10 +182,13 @@ export function createRoomService({ poker, rules }) {
   }
 
   function updateProfile(room, member, profileInput) {
+    if (room.game) {
+      throw new RoomError("牌局开始后不能更改昵称或头像。", 409, "profile_locked");
+    }
     const profile = normalizeProfile(profileInput, member.seat);
     member.name = profile.name;
     member.avatar = profile.avatar;
-    if (room.game) {
+    if (member.role === "player" && room.game) {
       renameGamePlayer(room.game, member.seat, member.name);
     }
     touch(room);
@@ -165,6 +196,12 @@ export function createRoomService({ poker, rules }) {
   }
 
   function leaveRoom(room, member) {
+    if (member.role === "spectator") {
+      room.spectators.delete(member.token);
+      touch(room);
+      broadcast(room);
+      return;
+    }
     if (room.game) {
       throw new RoomError("牌局开始后不能离开房间。", 409, "leave_locked");
     }
@@ -224,6 +261,9 @@ export function createRoomService({ poker, rules }) {
   }
 
   function runAction(room, member, body) {
+    if (member.role !== "player") {
+      throw new RoomError("观战中不能操作牌局。", 403, "spectator_readonly");
+    }
     const action = body && body.action;
     if (action === "next-round") {
       ensureHost(member);
@@ -245,7 +285,9 @@ export function createRoomService({ poker, rules }) {
     } else if (action === "hint") {
       selectHint(room.game, member.seat);
     } else if (action === "play") {
+      const cardsBeforePlay = room.game.players[member.seat].hand.length;
       poker.playSelected(room.game);
+      recordFourCardWarning(room, member.seat, cardsBeforePlay);
     } else if (action === "pass") {
       poker.passTurn(room.game);
     } else {
@@ -295,6 +337,7 @@ export function createRoomService({ poker, rules }) {
         playerNames: room.players.map((player) => player.name)
       })
       : poker.createNextRound(room.game);
+    resetFourCardWarnings(room);
     touch(room);
     broadcast(room);
   }
@@ -315,8 +358,32 @@ export function createRoomService({ poker, rules }) {
     broadcast(room);
   }
 
+  function resetFourCardWarnings(room) {
+    room.fourCardAlerts = [];
+    room.fourCardWarnedSeats = new Set();
+  }
+
+  function recordFourCardWarning(room, playerId, cardsBeforePlay) {
+    const gamePlayer = room.game && room.game.players[playerId];
+    if (!gamePlayer || room.game.phase !== "playing" || cardsBeforePlay <= 4) {
+      return;
+    }
+    const warnedSeats = room.fourCardWarnedSeats || (room.fourCardWarnedSeats = new Set());
+    const cardsLeft = gamePlayer.hand.length;
+    if (cardsLeft > 4 || warnedSeats.has(playerId)) {
+      return;
+    }
+    warnedSeats.add(playerId);
+    room.fourCardAlerts.push({
+      playerId,
+      playerName: room.players[playerId].name,
+      cardsLeft,
+      expiresAt: Date.now() + FOUR_CARD_ALERT_MS
+    });
+  }
+
   function ensureHost(member) {
-    if (member.seat !== 0) {
+    if (member.role === "spectator" || member.seat !== 0) {
       throw new RoomError("只有房主可以进行这个操作。", 403, "host_required");
     }
   }
@@ -327,14 +394,18 @@ export function createRoomService({ poker, rules }) {
 
   function viewRoom(room, member) {
     removeExpiredReactions(room);
+    removeExpiredFourCardAlerts(room);
     const game = room.game;
-    const players = room.players.map((player, playerId) => presentPlayer(player, game, playerId, member.seat));
+    const isSpectator = member.role === "spectator";
+    const viewerSeat = isSpectator ? null : member.seat;
+    const players = room.players.map((player, playerId) => presentPlayer(player, game, playerId, viewerSeat, isSpectator));
     return {
       mode: "room",
       active: Boolean(game),
       roomCode: room.code,
-      viewerSeat: member.seat,
-      isHost: member.seat === 0,
+      viewerSeat,
+      isSpectator,
+      isHost: !isSpectator && member.seat === 0,
       targetScore: room.targetScore,
       selectedTargetScore: room.targetScore,
       targetOptions: TARGET_OPTIONS,
@@ -350,44 +421,56 @@ export function createRoomService({ poker, rules }) {
       roundResult: game ? game.roundResult || [] : [],
       finalSettlement: game ? formatSettlement(game.finalSettlement) : null,
       resetLabel: game && game.phase === "finished" ? "下一轮" : "新游戏",
-      canStart: member.seat === 0 && !game && room.players.every(Boolean),
-      canChangeTarget: member.seat === 0 && !game,
-      canContinue: member.seat === 0 && Boolean(game && game.phase !== "playing"),
+      canStart: !isSpectator && member.seat === 0 && !game && room.players.every(Boolean),
+      canChangeTarget: !isSpectator && member.seat === 0 && !game,
+      canContinue: !isSpectator && member.seat === 0 && Boolean(game && game.phase !== "playing"),
       turnCount: game ? game.turnCount : 0,
       specialDeal: game ? game.specialDeal : null,
       winnerId: game ? game.winnerId : null,
-      reactions: Array.from(room.reactions.values()).map((reaction) => ({
+      spectatorCount: room.spectators.size,
+      spectators: Array.from(room.spectators.values()).map((spectator) => ({
+        name: spectator.name,
+        avatar: spectator.avatar,
+        isMe: spectator.token === member.token
+      })),
+      reactions: isSpectator ? [] : Array.from(room.reactions.values()).map((reaction) => ({
         playerId: reaction.playerId,
         emoji: reaction.emoji,
         label: reaction.label,
         expiresAt: reaction.expiresAt
-      }))
+      })),
+      alerts: isSpectator ? [] : room.fourCardAlerts
+        .filter((alert) => alert.playerId !== member.seat)
+        .map((alert) => ({ ...alert }))
     };
   }
 
-  function presentPlayer(member, game, playerId, viewerSeat) {
+  function presentPlayer(member, game, playerId, viewerSeat, isSpectator) {
     if (!member) {
       return {
         id: playerId,
         occupied: false,
         name: "等待玩家",
         avatar: "＋",
-        cardsLeft: 0,
+        cardsLeft: null,
+        cardCountVisible: false,
         score: 0,
         isHost: playerId === 0
       };
     }
     const gamePlayer = game && game.players[playerId];
+    const cardCountVisible = Boolean(!isSpectator && gamePlayer && (playerId === viewerSeat || gamePlayer.hand.length <= 4));
     const presented = {
       id: playerId,
       occupied: true,
       name: member.name,
       avatar: member.avatar,
-      cardsLeft: gamePlayer ? gamePlayer.hand.length : 0,
+      cardsLeft: cardCountVisible ? gamePlayer.hand.length : null,
+      cardCountVisible,
       score: gamePlayer ? gamePlayer.score : 0,
       isHost: playerId === 0
     };
-    if (gamePlayer && playerId === viewerSeat) {
+    if (!isSpectator && gamePlayer && playerId === viewerSeat) {
       presented.hand = gamePlayer.hand;
     }
     return presented;
@@ -444,18 +527,26 @@ export function createRoomService({ poker, rules }) {
     }
   }
 
+  function removeExpiredFourCardAlerts(room) {
+    const now = Date.now();
+    room.fourCardAlerts = (room.fourCardAlerts || []).filter((alert) => alert.expiresAt > now);
+  }
+
   function sessionFor(room, member) {
     return {
       roomCode: room.code,
       token: member.token,
-      seat: member.seat
+      seat: member.seat,
+      role: member.role
     };
   }
 
   function broadcast(room) {
     removeExpiredReactions(room);
+    removeExpiredFourCardAlerts(room);
     for (const listener of room.listeners) {
-      const member = room.players.find((player) => player && player.token === listener.token);
+      const member = room.players.find((player) => player && player.token === listener.token)
+        || room.spectators.get(listener.token);
       if (!member || listener.res.writableEnded) {
         room.listeners.delete(listener);
         continue;

@@ -34,6 +34,9 @@ try {
   assert.equal(started.active, true, "start activates a game");
   assert.equal(started.players.length, 4, "start returns four players");
   assert.equal(started.players[0].hand.length, 13, "local player has 13 cards");
+  assert.equal("hand" in started.players[1], false, "local preview does not reveal opponent hands");
+  assert.equal(started.players[1].cardsLeft, null, "local preview hides opponent card counts above four cards");
+  assert.equal(started.players[1].cardCountVisible, false, "local preview marks hidden opponent counts explicitly");
 
   const hinted = await request("/api/hint", {});
   assert.equal(
@@ -58,6 +61,10 @@ try {
   const page = await fetch(`${baseUrl}/`);
   assert.equal(page.ok, true, "preview page loads");
   assert.match(await page.text(), /四人扑克/, "preview page contains title");
+
+  const avatar = await fetch(`${baseUrl}/assets/avatars/portrait-1.jpg`);
+  assert.equal(avatar.ok, true, "bundled photo avatar loads from the preview server");
+  assert.match(avatar.headers.get("content-type") || "", /^image\/jpeg/, "photo avatar has an image content type");
 
   console.log("preview server smoke test passed");
 } finally {

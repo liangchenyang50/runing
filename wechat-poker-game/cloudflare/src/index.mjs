@@ -7,6 +7,9 @@ const ROOM_CODE_RE = /^\d{6}$/;
 const MAX_ROOM_AGE_MS = 1000 * 60 * 60 * 24;
 const MAX_AVATAR_DATA_LENGTH = 320000;
 const MAX_NAME_LENGTH = 12;
+const FOUR_CARD_ALERT_MS = 4500;
+const AVATAR_ASSET_RE = /^\/assets\/avatars\/portrait-[1-4]\.jpg$/;
+const MAX_SPECTATORS = 24;
 
 class RoomError extends Error {
   constructor(message, status = 400, code = "room_error") {
@@ -66,8 +69,11 @@ export class PokerRoom extends DurableObject {
         code,
         targetScore: 100,
         players: [member, null, null, null],
+        spectators: [],
         game: null,
         reactions: [],
+        fourCardAlerts: [],
+        fourCardWarnedSeats: [],
         createdAt: now,
         updatedAt: now
       };
@@ -82,12 +88,20 @@ export class PokerRoom extends DurableObject {
   async join(profileInput) {
     return this.asResult(async () => {
       const room = this.requireRoom();
-      if (room.game) {
-        throw new RoomError("牌局已经开始，不能再加入。", 409, "game_started");
-      }
       const seat = room.players.findIndex((player) => player === null);
-      if (seat === -1) {
-        throw new RoomError("房间已经满员。", 409, "room_full");
+      if (room.game || seat === -1) {
+        room.spectators = room.spectators || [];
+        if (room.spectators.length >= MAX_SPECTATORS) {
+          throw new RoomError("观战席已满，请稍后再试。", 409, "spectator_full");
+        }
+        const spectator = createSpectator(profileInput);
+        room.spectators.push(spectator);
+        await this.commit();
+        this.broadcast();
+        return {
+          session: sessionFor(room, spectator),
+          state: this.viewRoom(spectator)
+        };
       }
       const member = createMember(seat, profileInput);
       room.players[seat] = member;
@@ -123,6 +137,7 @@ export class PokerRoom extends DurableObject {
         targetScore: room.targetScore,
         playerNames: room.players.map((player) => player.name)
       });
+      resetFourCardWarnings(room);
       await this.commit();
       this.broadcast();
       return this.viewRoom(member);
@@ -152,10 +167,13 @@ export class PokerRoom extends DurableObject {
     return this.asResult(async () => {
       const room = this.requireRoom();
       const member = getMember(room, token);
+      if (room.game) {
+        throw new RoomError("牌局开始后不能更改昵称或头像。", 409, "profile_locked");
+      }
       const profile = normalizeProfile(profileInput, member.seat);
       member.name = profile.name;
       member.avatar = profile.avatar;
-      if (room.game) {
+      if (member.role !== "spectator" && room.game) {
         renameGamePlayer(room.game, member.seat, member.name);
       }
       await this.commit();
@@ -168,6 +186,9 @@ export class PokerRoom extends DurableObject {
     return this.asResult(async () => {
       const room = this.requireRoom();
       const member = getMember(room, token);
+      if (member.role === "spectator") {
+        throw new RoomError("观战中不能操作牌局。", 403, "spectator_readonly");
+      }
       const action = body && body.action;
       if (action === "next-round") {
         ensureHost(member);
@@ -187,6 +208,12 @@ export class PokerRoom extends DurableObject {
     return this.asResult(async () => {
       const room = this.requireRoom();
       const member = getMember(room, token);
+      if (member.role === "spectator") {
+        room.spectators = (room.spectators || []).filter((spectator) => spectator.token !== member.token);
+        await this.commit();
+        this.broadcast();
+        return { left: true };
+      }
       if (room.game) {
         throw new RoomError("牌局开始后不能离开房间。", 409, "leave_locked");
       }
@@ -286,6 +313,7 @@ export class PokerRoom extends DurableObject {
   }
 
   async commit() {
+    removeExpiredFourCardAlerts(this.room);
     this.room.updatedAt = Date.now();
     await this.persist();
   }
@@ -301,13 +329,16 @@ export class PokerRoom extends DurableObject {
   viewRoom(member) {
     const room = this.requireRoom();
     const game = room.game;
-    const players = room.players.map((player, playerId) => presentPlayer(player, game, playerId, member.seat));
+    const isSpectator = member.role === "spectator";
+    const viewerSeat = isSpectator ? null : member.seat;
+    const players = room.players.map((player, playerId) => presentPlayer(player, game, playerId, viewerSeat, isSpectator));
     return {
       mode: "room",
       active: Boolean(game),
       roomCode: room.code,
-      viewerSeat: member.seat,
-      isHost: member.seat === 0,
+      viewerSeat,
+      isSpectator,
+      isHost: !isSpectator && member.seat === 0,
       targetScore: room.targetScore,
       selectedTargetScore: room.targetScore,
       targetOptions: TARGET_OPTIONS,
@@ -323,15 +354,24 @@ export class PokerRoom extends DurableObject {
       roundResult: game ? game.roundResult || [] : [],
       finalSettlement: game ? formatSettlement(game.finalSettlement) : null,
       resetLabel: game && game.phase === "finished" ? "下一轮" : "新游戏",
-      canStart: member.seat === 0 && !game && room.players.every(Boolean),
-      canChangeTarget: member.seat === 0 && !game,
-      canContinue: member.seat === 0 && Boolean(game && game.phase !== "playing"),
+      canStart: !isSpectator && member.seat === 0 && !game && room.players.every(Boolean),
+      canChangeTarget: !isSpectator && member.seat === 0 && !game,
+      canContinue: !isSpectator && member.seat === 0 && Boolean(game && game.phase !== "playing"),
       turnCount: game ? game.turnCount : 0,
       specialDeal: game ? game.specialDeal : null,
       winnerId: game ? game.winnerId : null,
-      reactions: (room.reactions || [])
+      spectatorCount: (room.spectators || []).length,
+      spectators: (room.spectators || []).map((spectator) => ({
+        name: spectator.name,
+        avatar: spectator.avatar,
+        isMe: spectator.token === member.token
+      })),
+      reactions: isSpectator ? [] : (room.reactions || [])
         .filter((reaction) => reaction.expiresAt > Date.now())
-        .map((reaction) => ({ ...reaction }))
+        .map((reaction) => ({ ...reaction })),
+      alerts: isSpectator ? [] : (room.fourCardAlerts || [])
+        .filter((alert) => alert.expiresAt > Date.now() && alert.playerId !== member.seat)
+        .map((alert) => ({ ...alert }))
     };
   }
 
@@ -432,6 +472,9 @@ async function handleRoomRequest(request, env, url) {
 }
 
 function runGameAction(room, member, body) {
+  if (member.role === "spectator") {
+    throw new RoomError("观战中不能操作牌局。", 403, "spectator_readonly");
+  }
   const action = body && body.action;
   if (!room.game || room.game.phase !== "playing") {
     throw new RoomError("牌局尚未开始或本局已经结束。", 409, "game_not_playing");
@@ -444,7 +487,9 @@ function runGameAction(room, member, body) {
   } else if (action === "hint") {
     selectHint(room.game, member.seat);
   } else if (action === "play") {
+    const cardsBeforePlay = room.game.players[member.seat].hand.length;
     poker.playSelected(room.game);
+    recordFourCardWarning(room, member.seat, cardsBeforePlay);
   } else if (action === "pass") {
     poker.passTurn(room.game);
   } else {
@@ -465,6 +510,7 @@ function advanceRound(room) {
       playerNames: room.players.map((player) => player.name)
     })
     : poker.createNextRound(room.game);
+  resetFourCardWarnings(room);
 }
 
 function autoPassUnplayablePlayers(game) {
@@ -514,10 +560,58 @@ function setReaction(room, member, emoji, label) {
   }
 }
 
+function resetFourCardWarnings(room) {
+  room.fourCardAlerts = [];
+  room.fourCardWarnedSeats = [];
+}
+
+function recordFourCardWarning(room, playerId, cardsBeforePlay) {
+  const gamePlayer = room.game && room.game.players[playerId];
+  if (!gamePlayer || room.game.phase !== "playing" || cardsBeforePlay <= 4) {
+    return;
+  }
+  const warnedSeats = Array.isArray(room.fourCardWarnedSeats)
+    ? room.fourCardWarnedSeats
+    : (room.fourCardWarnedSeats = []);
+  const cardsLeft = gamePlayer.hand.length;
+  if (cardsLeft > 4 || warnedSeats.includes(playerId)) {
+    return;
+  }
+  warnedSeats.push(playerId);
+  room.fourCardAlerts = room.fourCardAlerts || [];
+  room.fourCardAlerts.push({
+    playerId,
+    playerName: room.players[playerId].name,
+    cardsLeft,
+    expiresAt: Date.now() + FOUR_CARD_ALERT_MS
+  });
+}
+
+function removeExpiredFourCardAlerts(room) {
+  if (!room) {
+    return;
+  }
+  const now = Date.now();
+  room.fourCardAlerts = (room.fourCardAlerts || []).filter((alert) => alert.expiresAt > now);
+}
+
 function createMember(seat, profileInput) {
   const profile = normalizeProfile(profileInput, seat);
   return {
+    role: "player",
     seat,
+    token: createToken(),
+    name: profile.name,
+    avatar: profile.avatar,
+    joinedAt: Date.now()
+  };
+}
+
+function createSpectator(profileInput) {
+  const profile = normalizeProfile(profileInput, 0);
+  return {
+    role: "spectator",
+    seat: null,
     token: createToken(),
     name: profile.name,
     avatar: profile.avatar,
@@ -544,6 +638,9 @@ function sanitizeAvatar(value, seat) {
   if (!trimmed) {
     return fallback;
   }
+  if (AVATAR_ASSET_RE.test(trimmed)) {
+    return trimmed;
+  }
   if (/^data:image\/(png|jpeg|webp|gif);base64,/i.test(trimmed)) {
     return trimmed.length <= MAX_AVATAR_DATA_LENGTH ? trimmed : fallback;
   }
@@ -551,7 +648,8 @@ function sanitizeAvatar(value, seat) {
 }
 
 function getMember(room, token) {
-  const member = room.players.find((player) => player && player.token === token);
+  const member = room.players.find((player) => player && player.token === token)
+    || (room.spectators || []).find((spectator) => spectator.token === token);
   if (!member) {
     throw new RoomError("房间身份已失效，请重新加入。", 403, "invalid_session");
   }
@@ -561,42 +659,47 @@ function getMember(room, token) {
 function memberForSocket(room, socket) {
   const attachment = socket.deserializeAttachment();
   const token = attachment && typeof attachment.token === "string" ? attachment.token : "";
-  return room.players.find((player) => player && player.token === token) || null;
+  return room.players.find((player) => player && player.token === token)
+    || (room.spectators || []).find((spectator) => spectator.token === token)
+    || null;
 }
 
 function ensureHost(member) {
-  if (member.seat !== 0) {
+  if (member.role === "spectator" || member.seat !== 0) {
     throw new RoomError("只有房主可以进行这个操作。", 403, "host_required");
   }
 }
 
 function sessionFor(room, member) {
-  return { roomCode: room.code, token: member.token, seat: member.seat };
+  return { roomCode: room.code, token: member.token, seat: member.seat, role: member.role };
 }
 
-function presentPlayer(member, game, playerId, viewerSeat) {
+function presentPlayer(member, game, playerId, viewerSeat, isSpectator) {
   if (!member) {
     return {
       id: playerId,
       occupied: false,
       name: "等待玩家",
       avatar: "＋",
-      cardsLeft: 0,
+      cardsLeft: null,
+      cardCountVisible: false,
       score: 0,
       isHost: playerId === 0
     };
   }
   const gamePlayer = game && game.players[playerId];
+  const cardCountVisible = Boolean(!isSpectator && gamePlayer && (playerId === viewerSeat || gamePlayer.hand.length <= 4));
   const presented = {
     id: playerId,
     occupied: true,
     name: member.name,
     avatar: member.avatar,
-    cardsLeft: gamePlayer ? gamePlayer.hand.length : 0,
+    cardsLeft: cardCountVisible ? gamePlayer.hand.length : null,
+    cardCountVisible,
     score: gamePlayer ? gamePlayer.score : 0,
     isHost: playerId === 0
   };
-  if (gamePlayer && playerId === viewerSeat) {
+  if (!isSpectator && gamePlayer && playerId === viewerSeat) {
     presented.hand = gamePlayer.hand;
   }
   return presented;

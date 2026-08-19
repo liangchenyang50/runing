@@ -23,7 +23,14 @@ const REACTIONS = [
   { emoji: "🍀", label: "好运" }
 ];
 
-const AVATARS = ["😀", "😺", "🐼", "🦊", "🐸", "🐯", "🐰", "🦁", "🐻", "🐨", "🐵", "🐧"];
+const AVATAR_ASSET_PREFIX = "/assets/avatars/";
+const PHOTO_AVATARS = [
+  "/assets/avatars/portrait-1.jpg",
+  "/assets/avatars/portrait-2.jpg",
+  "/assets/avatars/portrait-3.jpg",
+  "/assets/avatars/portrait-4.jpg"
+];
+const AVATARS = [...PHOTO_AVATARS, "😀", "😺", "🐼", "🦊", "🐸", "🐯", "🐰", "🦁", "🐻", "🐨", "🐵", "🐧"];
 const PROFILE_KEY = "four-poker-profile-v1";
 const SESSION_KEY = "four-poker-room-session-v1";
 const DEFAULT_PROFILE_NAME = "英雄";
@@ -161,6 +168,9 @@ function escapeHtml(value) {
 
 function render(state) {
   currentState = state || { mode: "home" };
+  if (currentState.mode === "room" && currentState.active) {
+    profileEditorOpen = false;
+  }
   const content = currentState.mode === "room"
     ? currentState.phase === "lobby" ? renderRoomLobby(currentState) : renderGame(currentState)
     : currentState.active ? renderGame(currentState) : isSoloSetup(currentState) ? renderSoloSetup(currentState) : renderHome();
@@ -245,7 +255,7 @@ function renderRoomLobby(state) {
   return `
     <section class="setup-screen room-lobby-screen">
       <header class="game-header setup-header">
-        <div class="round-sign"><strong>房间 ${escapeHtml(state.roomCode)}</strong><span>等待入座</span></div>
+        <div class="round-sign"><strong>房间 ${escapeHtml(state.roomCode)}</strong><span>${state.isSpectator ? "观战中" : "等待入座"}</span></div>
         <button class="header-profile" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(profile.avatar, "header-avatar", profile.name)}<span>${escapeHtml(profile.name)}</span></button>
       </header>
       <section class="room-lobby-content">
@@ -255,20 +265,23 @@ function renderRoomLobby(state) {
           <button data-action="copy-room" title="复制房间号" aria-label="复制房间号">复制</button>
         </div>
         <div class="lobby-seat-grid">
-          ${state.players.map((player) => renderLobbySeat(player, player.id === state.viewerSeat)).join("")}
+          ${state.players.map((player) => renderLobbySeat(player, !state.isSpectator && player.id === state.viewerSeat)).join("")}
         </div>
         <div class="lobby-controls">
           <p class="lobby-count">已入座 ${state.playerCount} / 4</p>
-          <div class="target-row room-target-row" aria-label="选择目标分">
-            ${state.targetOptions.map((score) => `
-              <button class="target-button ${state.targetScore === score ? "selected" : ""}" data-action="room-target" data-score="${score}" ${state.canChangeTarget ? "" : "disabled"}>
-                ${score} 分
-              </button>
-            `).join("")}
-          </div>
-          <button class="game-button game-button-play start-button" data-action="room-start" ${state.canStart ? "" : "disabled"}>${state.isHost ? "开始对局" : "等待房主开始"}</button>
+          ${renderLobbySpectators(state)}
+          ${state.isSpectator ? '<p class="spectator-lobby-note">你正在观战，等待房主开局。</p>' : `
+            <div class="target-row room-target-row" aria-label="选择目标分">
+              ${state.targetOptions.map((score) => `
+                <button class="target-button ${state.targetScore === score ? "selected" : ""}" data-action="room-target" data-score="${score}" ${state.canChangeTarget ? "" : "disabled"}>
+                  ${score} 分
+                </button>
+              `).join("")}
+            </div>
+            <button class="game-button game-button-play start-button" data-action="room-start" ${state.canStart ? "" : "disabled"}>${state.isHost ? "开始对局" : "等待房主开始"}</button>
+          `}
           <button class="solo-entry" data-action="leave-room">离开房间</button>
-          <p class="rule-note">${state.isHost ? "四人到齐后即可开始。" : "请等待房主开始对局。"}</p>
+          ${state.isSpectator ? "" : `<p class="rule-note">${state.isHost ? "四人到齐后即可开始。" : "请等待房主开始对局。"}</p>`}
         </div>
       </section>
     </section>
@@ -293,44 +306,61 @@ function renderLobbySeat(player, isMe) {
   `;
 }
 
+function renderLobbySpectators(state) {
+  const count = Number(state.spectatorCount) || 0;
+  if (count === 0) {
+    return "";
+  }
+  return `<p class="lobby-spectator-count">观战席 ${count} 人</p>`;
+}
+
 function renderGame(state) {
   const seats = getViewerSeats(state);
-  const roomLabel = state.mode === "room" ? `<span>房间 ${escapeHtml(state.roomCode)}</span>` : "<span>跑得快</span>";
+  const roomLabel = state.mode === "room"
+    ? `<span>房间 ${escapeHtml(state.roomCode)}${state.isSpectator ? " · 观战" : ""}</span>`
+    : "<span>跑得快</span>";
   return `
     <section class="game-board ${state.phase !== "playing" ? "round-finished" : ""}">
       <header class="game-header">
         <div class="round-sign"><strong>第 ${state.turnCount} 手</strong><span>目标 ${state.targetScore} 分</span></div>
         <div class="table-title">四人扑克 ${roomLabel}</div>
         ${state.mode === "room"
-          ? `<button class="restart-control room-info-control" data-action="copy-room" title="复制房间号" aria-label="复制房间号">#</button>`
+          ? state.isSpectator
+            ? '<button class="restart-control spectator-leave-control" data-action="leave-room" title="退出观战" aria-label="退出观战">×</button>'
+            : `<button class="restart-control room-info-control" data-action="copy-room" title="复制房间号" aria-label="复制房间号">#</button>`
           : `<button class="restart-control" data-action="reset" title="${escapeHtml(state.resetLabel)}" aria-label="${escapeHtml(state.resetLabel)}">↻</button>`}
       </header>
 
       ${renderSeat(seats.left, "left", state)}
       ${renderSeat(seats.top, "top", state)}
       ${renderSeat(seats.right, "right", state)}
+      ${state.isSpectator ? renderSeat(seats.bottom, "bottom", state) : ""}
+      ${renderSpectatorRail(state)}
 
       ${renderTableActions(state.tableActions, state.viewerSeat || 0)}
+      ${renderFourCardAlerts(state)}
+      ${renderClientNotice()}
 
       <section class="center-stage">
-        <div class="turn-message ${clientNotice ? "has-notice" : ""}">${escapeHtml(clientNotice || state.message)}</div>
         ${renderRoundScore(state.roundResult)}
         ${renderSettlement(state.finalSettlement)}
         ${renderRoundControl(state)}
       </section>
 
-      ${state.phase === "playing" ? renderGameActions(state) : ""}
+      ${state.phase === "playing" && !state.isSpectator ? renderGameActions(state) : ""}
 
-      <section class="emoji-dock">
+      ${!state.isSpectator ? `<section class="emoji-dock">
         ${emojiPickerOpen ? renderEmojiPicker() : ""}
         <button class="emoji-toggle" data-action="toggle-emoji" title="发送表情" aria-label="发送表情">
           <span class="emoji-icon">☺</span><span>表情</span>
         </button>
-      </section>
+      </section>` : ""}
 
-      <section class="my-zone">
+      ${state.isSpectator ? "" : `<section class="my-zone">
         <div class="my-profile">
-          <button class="avatar-edit-control" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(seats.me.avatar, "my-avatar", seats.me.name)}</button>
+          ${state.mode === "room"
+            ? renderAvatar(seats.me.avatar, "my-avatar", seats.me.name)
+            : `<button class="avatar-edit-control" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(seats.me.avatar, "my-avatar", seats.me.name)}</button>`}
           <div class="my-profile-copy">
             <strong>${escapeHtml(seats.me.name)}</strong>
             <span>${state.myTurn ? "轮到你出牌" : "等待对手出牌"}</span>
@@ -341,7 +371,7 @@ function renderGame(state) {
         <div class="hand-rack" aria-label="你的手牌">
           ${(seats.me.hand || []).map((card) => renderHandCard(card, state.myTurn)).join("")}
         </div>
-      </section>
+      </section>`}
     </section>
   `;
 }
@@ -349,7 +379,16 @@ function renderGame(state) {
 function getViewerSeats(state) {
   const viewerSeat = Number.isInteger(state.viewerSeat) ? state.viewerSeat : 0;
   const playerById = new Map((state.players || []).map((player) => [player.id, player]));
-  const fallback = (id) => ({ id, name: "玩家", avatar: "😀", hand: [], cardsLeft: 0, score: 0 });
+  const fallback = (id) => ({ id, name: "玩家", avatar: "😀", hand: [], cardsLeft: null, cardCountVisible: false, score: 0 });
+  if (state.mode === "room" && state.isSpectator) {
+    return {
+      me: { id: "spectator", name: profile.name, avatar: profile.avatar, hand: [], score: 0 },
+      left: playerById.get(1) || fallback(1),
+      top: playerById.get(2) || fallback(2),
+      right: playerById.get(3) || fallback(3),
+      bottom: playerById.get(0) || fallback(0)
+    };
+  }
   const currentPlayer = playerById.get(viewerSeat) || fallback(viewerSeat);
   const me = state.mode === "room"
     ? currentPlayer
@@ -358,12 +397,34 @@ function getViewerSeats(state) {
     me,
     left: playerById.get((viewerSeat + 1) % 4) || fallback((viewerSeat + 1) % 4),
     top: playerById.get((viewerSeat + 2) % 4) || fallback((viewerSeat + 2) % 4),
-    right: playerById.get((viewerSeat + 3) % 4) || fallback((viewerSeat + 3) % 4)
+    right: playerById.get((viewerSeat + 3) % 4) || fallback((viewerSeat + 3) % 4),
+    bottom: null
   };
 }
 
+function renderSpectatorRail(state) {
+  const spectators = state.spectators || [];
+  if (spectators.length === 0) {
+    return "";
+  }
+  const visibleSpectators = spectators.slice(0, 8);
+  return `
+    <section class="spectator-rail" aria-label="观战席">
+      <span>观战席 ${spectators.length}</span>
+      <div class="spectator-avatars">
+        ${visibleSpectators.map((spectator) => `<div class="spectator-avatar ${spectator.isMe ? "is-me" : ""}" title="${escapeHtml(spectator.name)}">${renderAvatarChoice(spectator.avatar, 0)}</div>`).join("")}
+        ${spectators.length > visibleSpectators.length ? `<b>+${spectators.length - visibleSpectators.length}</b>` : ""}
+      </div>
+    </section>
+  `;
+}
+
 function renderSeat(player, position, state) {
-  const cardCount = player.cardsLeft == null ? (player.hand || []).length : player.cardsLeft;
+  const cardCountVisible = player.cardCountVisible === true;
+  const cardCount = cardCountVisible
+    ? (player.cardsLeft == null ? (player.hand || []).length : player.cardsLeft)
+    : null;
+  const isFourCardWarning = cardCountVisible && cardCount <= 4;
   return `
     <section class="seat seat-${position}">
       ${renderAvatar(player.avatar, `avatar avatar-${player.id}`, player.name)}
@@ -372,10 +433,10 @@ function renderSeat(player, position, state) {
         ${player.isHost ? '<span class="seat-host">房主</span>' : ""}
       </div>
       <div class="seat-stats">
-        <span class="cards-left">${cardCount}</span>
+        ${cardCountVisible ? `<span class="cards-left ${isFourCardWarning ? "four-card-warning" : ""}">${cardCount}</span>` : ""}
         <span class="score-chip">${player.score || 0} 分</span>
       </div>
-      <div class="back-fan" aria-label="${escapeHtml(player.name)}剩余 ${cardCount} 张牌">
+      <div class="back-fan" aria-label="${escapeHtml(player.name)}${cardCountVisible ? `剩余 ${cardCount} 张牌` : "手牌数量未公开"}">
         ${renderCardBacks(cardCount)}
       </div>
       ${renderReactionBubble(state, player.id, "seat-reaction")}
@@ -385,15 +446,41 @@ function renderSeat(player, position, state) {
 
 function renderAvatar(avatar, className, name) {
   const safeAvatar = String(avatar || "😀");
-  const content = safeAvatar.startsWith("data:image/")
+  const content = isImageAvatar(safeAvatar)
     ? `<img src="${escapeHtml(safeAvatar)}" alt="${escapeHtml(name || "头像")}">`
     : escapeHtml(safeAvatar);
   return `<div class="${className}" aria-label="${escapeHtml(name || "玩家头像")}">${content}</div>`;
 }
 
+function isImageAvatar(avatar) {
+  const value = String(avatar || "");
+  return value.startsWith("data:image/") || value.startsWith(AVATAR_ASSET_PREFIX);
+}
+
 function renderCardBacks(cardCount) {
-  const shown = Math.min(5, Math.max(2, Math.ceil(cardCount / 3)));
+  const shown = Number.isFinite(cardCount)
+    ? Math.min(5, Math.max(2, Math.ceil(cardCount / 3)))
+    : 5;
   return Array.from({ length: shown }, (_, index) => `<i class="card-back card-back-${index}"></i>`).join("");
+}
+
+function renderFourCardAlerts(state) {
+  const alerts = (state.alerts || []).filter((alert) => alert && alert.expiresAt > Date.now());
+  if (alerts.length === 0) {
+    return "";
+  }
+  return `
+    <section class="four-card-alerts" aria-live="assertive" aria-atomic="true">
+      ${alerts.map((alert) => `<div class="four-card-alert">⚠ ${escapeHtml(alert.playerName)}仅剩 ${escapeHtml(alert.cardsLeft)} 张牌</div>`).join("")}
+    </section>
+  `;
+}
+
+function renderClientNotice() {
+  if (!clientNotice) {
+    return "";
+  }
+  return `<div class="client-notice" role="status">${escapeHtml(clientNotice)}</div>`;
 }
 
 function renderTableActions(actions, viewerSeat) {
@@ -537,8 +624,8 @@ function renderProfileEditor() {
         <input id="profile-name" maxlength="12" value="${escapeHtml(profileDraft.name)}" autocomplete="nickname">
         <span class="field-label">选择头像</span>
         <div class="avatar-choice-grid">
-          ${AVATARS.map((avatar) => `
-            <button type="button" class="avatar-choice ${profileDraft.avatar === avatar ? "selected" : ""}" data-action="avatar-choice" data-avatar="${avatar}" aria-label="选择头像 ${avatar}">${avatar}</button>
+          ${AVATARS.map((avatar, index) => `
+            <button type="button" class="avatar-choice ${isImageAvatar(avatar) ? "image-avatar-choice" : ""} ${profileDraft.avatar === avatar ? "selected" : ""}" data-action="avatar-choice" data-avatar="${escapeHtml(avatar)}" aria-label="选择头像 ${isImageAvatar(avatar) ? `照片 ${index + 1}` : escapeHtml(avatar)}">${renderAvatarChoice(avatar, index)}</button>
           `).join("")}
         </div>
         <label class="upload-avatar-button" for="profile-avatar-file">上传图片头像</label>
@@ -547,6 +634,13 @@ function renderProfileEditor() {
       </form>
     </section>
   `;
+}
+
+function renderAvatarChoice(avatar, index) {
+  if (isImageAvatar(avatar)) {
+    return `<img src="${escapeHtml(avatar)}" alt="头像照片 ${index + 1}">`;
+  }
+  return escapeHtml(avatar);
 }
 
 function syncRoomEvents(state) {
@@ -640,8 +734,8 @@ function scheduleReactionExpiry(state) {
     clearTimeout(expiryTimer);
     expiryTimer = null;
   }
-  const expiryTimes = (state.reactions || [])
-    .map((reaction) => reaction.expiresAt)
+  const expiryTimes = [...(state.reactions || []), ...(state.alerts || [])]
+    .map((item) => item.expiresAt)
     .filter((expiresAt) => Number.isFinite(expiresAt) && expiresAt > Date.now());
   if (expiryTimes.length === 0) {
     return;
@@ -714,13 +808,15 @@ async function joinRoom() {
 
 async function saveCurrentProfile() {
   captureProfileName();
-  saveProfile(profileDraft);
   if (currentState.mode === "room" && session) {
-    const state = await roomApi("/profile", { profile });
+    const nextProfile = normalizeProfile(profileDraft);
+    const state = await roomApi("/profile", { profile: nextProfile });
+    saveProfile(nextProfile);
     profileEditorOpen = false;
     render(state);
     return;
   }
+  saveProfile(profileDraft);
   profileEditorOpen = false;
   render(currentState);
 }

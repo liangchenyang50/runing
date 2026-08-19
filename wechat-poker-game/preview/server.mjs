@@ -15,18 +15,26 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
 const DEFAULT_PORT = 5178;
 const MAX_PORT_ATTEMPTS = 30;
+const FOUR_CARD_ALERT_MS = 4500;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml; charset=utf-8"
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif"
 };
 
 export function createPreviewApp() {
   let selectedTargetScore = 100;
   let state = null;
+  let fourCardAlerts = [];
+  let fourCardWarnedPlayerIds = new Set();
   const roomService = createRoomService({ poker, rules });
 
   function runAutoPlayers() {
@@ -38,7 +46,10 @@ export function createPreviewApp() {
         }
         poker.passTurn(state);
       } else {
+        const playerId = state.currentPlayer;
+        const cardsBeforePlay = state.players[playerId].hand.length;
         poker.autoPlayOneCard(state);
+        recordFourCardWarning(playerId, cardsBeforePlay);
       }
       guard += 1;
     }
@@ -65,6 +76,7 @@ export function createPreviewApp() {
 
   function startGame() {
     state = poker.createGame({ targetScore: selectedTargetScore });
+    resetFourCardWarnings();
     runAutoPlayers();
   }
 
@@ -82,6 +94,7 @@ export function createPreviewApp() {
     } else {
       state = poker.createGame({ targetScore: state.targetScore || selectedTargetScore });
     }
+    resetFourCardWarnings();
     runAutoPlayers();
   }
 
@@ -111,7 +124,7 @@ export function createPreviewApp() {
       selectedTargetScore,
       targetScore: state.targetScore,
       targetOptions: [100, 200, 500],
-      players: state.players,
+      players: state.players.map(presentLocalPlayer),
       message: state.message,
       lastPlayText: last ? `${last.playerName}：${last.label}` : "等待出牌",
       lastPlay: formatLastPlay(state.trick && state.trick.lastPlay),
@@ -123,8 +136,55 @@ export function createPreviewApp() {
       resetLabel: state.phase === "finished" ? "下一轮" : state.phase === "gameOver" ? "新游戏" : "重开",
       turnCount: state.turnCount,
       specialDeal: state.specialDeal,
-      winnerId: state.winnerId
+      winnerId: state.winnerId,
+      alerts: visibleFourCardAlerts()
     };
+  }
+
+  function presentLocalPlayer(player, playerId) {
+    const cardsLeft = player.hand.length;
+    const cardCountVisible = playerId === 0 || cardsLeft <= 4;
+    const presented = {
+      id: player.id,
+      name: player.name,
+      score: player.score,
+      occupied: true,
+      cardsLeft: cardCountVisible ? cardsLeft : null,
+      cardCountVisible
+    };
+    if (playerId === 0) {
+      presented.hand = player.hand;
+    }
+    return presented;
+  }
+
+  function resetFourCardWarnings() {
+    fourCardAlerts = [];
+    fourCardWarnedPlayerIds = new Set();
+  }
+
+  function recordFourCardWarning(playerId, cardsBeforePlay) {
+    if (!state || state.phase !== "playing" || cardsBeforePlay <= 4 || fourCardWarnedPlayerIds.has(playerId)) {
+      return;
+    }
+    const player = state.players[playerId];
+    const cardsLeft = player && player.hand ? player.hand.length : 0;
+    if (cardsLeft > 4) {
+      return;
+    }
+    fourCardWarnedPlayerIds.add(playerId);
+    fourCardAlerts.push({
+      playerId,
+      playerName: player.name,
+      cardsLeft,
+      expiresAt: Date.now() + FOUR_CARD_ALERT_MS
+    });
+  }
+
+  function visibleFourCardAlerts() {
+    const now = Date.now();
+    fourCardAlerts = fourCardAlerts.filter((alert) => alert.expiresAt > now);
+    return fourCardAlerts.filter((alert) => alert.playerId !== 0).map((alert) => ({ ...alert }));
   }
 
   function formatSettlement(settlement) {
@@ -177,7 +237,9 @@ export function createPreviewApp() {
 
   function playSelected() {
     if (state) {
+      const cardsBeforePlay = state.players[0].hand.length;
       poker.playSelected(state);
+      recordFourCardWarning(0, cardsBeforePlay);
       runAutoPlayers();
     }
   }

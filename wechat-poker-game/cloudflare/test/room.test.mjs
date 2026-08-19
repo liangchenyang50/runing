@@ -38,7 +38,28 @@ describe("Cloudflare room service", () => {
     expect(started.active).toBe(true);
     expect(started.players[host.session.seat].hand).toHaveLength(13);
     expect(started.players[second.session.seat].hand).toBeUndefined();
-    expect(started.players[second.session.seat].cardsLeft).toBe(13);
+    expect(started.players[second.session.seat].cardsLeft).toBeNull();
+    expect(started.players[second.session.seat].cardCountVisible).toBe(false);
+
+    const spectator = await post(`/api/rooms/${roomCode}/join`, {
+      profile: { name: "观众", avatar: "/assets/avatars/portrait-1.jpg" }
+    }, 201);
+    expect(spectator.session.role).toBe("spectator");
+    expect(spectator.state.isSpectator).toBe(true);
+    expect(spectator.state.players.every((player) => player.hand === undefined)).toBe(true);
+    expect(spectator.state.players.every((player) => player.cardsLeft === null)).toBe(true);
+
+    const spectatorAction = await request(`/api/rooms/${roomCode}/action`, {
+      token: spectator.session.token,
+      action: "hint"
+    });
+    expect(spectatorAction.response.status).toBe(403);
+
+    const lockedProfile = await request(`/api/rooms/${roomCode}/profile`, {
+      token: third.session.token,
+      profile: { name: "不应修改", avatar: "🐼" }
+    });
+    expect(lockedProfile.response.status).toBe(409);
 
     let playable = started;
     for (let attempt = 0; attempt < 3 && playable.phase !== "playing"; attempt += 1) {

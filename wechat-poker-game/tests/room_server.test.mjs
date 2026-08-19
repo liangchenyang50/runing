@@ -66,6 +66,12 @@ try {
   const fourth = await post(`/api/rooms/${roomCode}/join`, { profile: { name: "小右", avatar: "🐯" } });
   const sessions = [host.session, second.session, third.session, fourth.session];
 
+  const renamed = await post(`/api/rooms/${roomCode}/profile`, {
+    token: third.session.token,
+    profile: { name: "自定义昵称", avatar: "🦁" }
+  });
+  assert.equal(renamed.players[third.session.seat].name, "自定义昵称", "a player can update their nickname before the room starts");
+
   const fullLobby = await getState(roomCode, host.session.token);
   assert.equal(fullLobby.playerCount, 4, "four players can fill a room");
   assert.equal(fullLobby.players[3].name, "小右", "custom nickname is visible to the room");
@@ -75,7 +81,27 @@ try {
   assert.equal(started.active, true, "starting the room creates a shared game");
   assert.equal(started.players[0].hand.length, 13, "the viewer receives their own thirteen cards");
   assert.equal("hand" in started.players[1], false, "the viewer does not receive an opponent hand");
-  assert.equal(started.players[1].cardsLeft, 13, "opponent card counts remain visible");
+  assert.equal(started.players[1].cardsLeft, null, "opponent card counts stay hidden above four cards");
+  assert.equal(started.players[1].cardCountVisible, false, "opponent hidden card counts are explicit in the room state");
+
+  const spectator = await post(`/api/rooms/${roomCode}/join`, { profile: { name: "观众", avatar: "/assets/avatars/portrait-1.jpg" } });
+  assert.equal(spectator.session.role, "spectator", "joining a full room creates a spectator session");
+  assert.equal(spectator.state.isSpectator, true, "spectator state is marked as read-only");
+  assert.equal(spectator.state.players.every((player) => !Object.hasOwn(player, "hand")), true, "spectator never receives any hand");
+  assert.equal(spectator.state.players.every((player) => player.cardsLeft === null), true, "spectator never receives card counts");
+  assert.equal(spectator.state.spectatorCount, 1, "the room exposes the active spectator count");
+
+  const spectatorAction = await request(`/api/rooms/${roomCode}/action`, {
+    token: spectator.session.token,
+    action: "hint"
+  });
+  assert.equal(spectatorAction.response.status, 403, "spectator actions are rejected by the server");
+
+  const lockedProfile = await request(`/api/rooms/${roomCode}/profile`, {
+    token: third.session.token,
+    profile: { name: "不应修改", avatar: "🐼" }
+  });
+  assert.equal(lockedProfile.response.status, 409, "player profiles lock once a room starts");
 
   let playingState = started;
   for (let attempt = 0; attempt < 3 && playingState.phase !== "playing"; attempt += 1) {
@@ -109,12 +135,6 @@ try {
   });
   assert.equal(reaction.reactions[0].playerId, second.session.seat, "room reactions include the sending player");
 
-  const renamed = await post(`/api/rooms/${roomCode}/profile`, {
-    token: third.session.token,
-    profile: { name: "自定义昵称", avatar: "🦁" }
-  });
-  assert.equal(renamed.players[third.session.seat].name, "自定义昵称", "a player can update their nickname");
-
   const controller = new AbortController();
   const eventResponse = await fetch(`${baseUrl}/api/rooms/${roomCode}/events?token=${host.session.token}`, {
     signal: controller.signal
@@ -124,9 +144,11 @@ try {
   const firstEvent = await reader.read();
   const eventText = new TextDecoder().decode(firstEvent.value);
   assert.match(eventText, /event: state/, "event stream sends an initial state");
-  await post(`/api/rooms/${roomCode}/profile`, {
+  await post(`/api/rooms/${roomCode}/action`, {
     token: fourth.session.token,
-    profile: { name: "实时同步", avatar: "🐯" }
+    action: "reaction",
+    emoji: "😄",
+    label: "实时同步"
   });
   const streamedEvent = await readWithTimeout(reader);
   const streamedText = new TextDecoder().decode(streamedEvent.value);
