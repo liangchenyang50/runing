@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { createRoomService, isRoomError } from "./room_service.mjs";
 
 const require = createRequire(import.meta.url);
 const poker = require("../js/poker_core.js");
@@ -26,6 +27,7 @@ const mimeTypes = {
 export function createPreviewApp() {
   let selectedTargetScore = 100;
   let state = null;
+  const roomService = createRoomService({ poker, rules });
 
   function runAutoPlayers() {
     let guard = 0;
@@ -244,13 +246,21 @@ export function createPreviewApp() {
   async function handle(req, res) {
     try {
       const url = new URL(req.url || "/", "http://127.0.0.1");
+      if (url.pathname.startsWith("/api/rooms")) {
+        await roomService.handle(req, res, url, { readJson, sendJson });
+        return;
+      }
       if (url.pathname.startsWith("/api/")) {
         await handleApi(req, res, url.pathname);
         return;
       }
       await serveStatic(url.pathname, res);
     } catch (error) {
-      sendJson(res, { error: "server_error", message: error.message }, 500);
+      const status = isRoomError(error)
+        ? error.status
+        : Number.isInteger(error.status) ? error.status : 500;
+      const code = isRoomError(error) ? error.code : "server_error";
+      sendJson(res, { error: code, message: error.message || "服务暂时不可用。" }, status);
     }
   }
 
@@ -324,11 +334,22 @@ async function readJson(req) {
   let raw = "";
   for await (const chunk of req) {
     raw += chunk;
+    if (raw.length > 360000) {
+      const error = new Error("请求内容过大。");
+      error.status = 413;
+      throw error;
+    }
   }
   if (!raw.trim()) {
     return {};
   }
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const error = new Error("请求内容不是有效的 JSON。");
+    error.status = 400;
+    throw error;
+  }
 }
 
 function sendJson(res, payload, status = 200) {
@@ -359,6 +380,7 @@ if (process.argv[1] && normalize(process.argv[1]) === normalize(__filename)) {
     : Number.isFinite(envPort)
       ? envPort
       : DEFAULT_PORT;
-  const preview = await listenWithFallback(requestedPort);
+  const requestedHost = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
+  const preview = await listenWithFallback(requestedPort, requestedHost);
   console.log(`Preview server running at ${preview.url}`);
 }

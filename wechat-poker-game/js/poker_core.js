@@ -47,8 +47,11 @@ function sortHand(hand) {
   });
 }
 
-function deal(deck, scores) {
-  const players = PLAYER_NAMES.map(function makePlayer(name, index) {
+function deal(deck, scores, playerNames) {
+  const names = Array.isArray(playerNames) && playerNames.length === PLAYER_NAMES.length
+    ? playerNames
+    : PLAYER_NAMES;
+  const players = names.map(function makePlayer(name, index) {
     return {
       id: index,
       name,
@@ -83,7 +86,7 @@ function createGame(options) {
   const scores = settings.scores || (settings.previousState
     ? settings.previousState.players.map(function mapScore(player) { return player.score || 0; })
     : null);
-  const players = deal(deck, scores);
+  const players = deal(deck, scores, settings.playerNames);
   const requestedStarter = typeof settings.startingPlayer === "number"
     ? settings.startingPlayer
     : settings.previousState && typeof settings.previousState.winnerId === "number"
@@ -381,7 +384,8 @@ function createNextRound(previousState, rng) {
     rng: rng || previousState.rng || Math.random,
     previousState,
     startingPlayer: previousState.winnerId,
-    targetScore: previousState.targetScore
+    targetScore: previousState.targetScore,
+    playerNames: previousState.players.map(function playerName(player) { return player.name; })
   });
 }
 
