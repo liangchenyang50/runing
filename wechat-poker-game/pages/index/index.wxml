@@ -1,0 +1,87 @@
+<view class="table">
+  <view class="header">
+    <view class="title">四人扑克</view>
+    <view class="subtitle">3 最小，2 最大 · 目标 {{targetScore}} 分</view>
+  </view>
+
+  <block wx:if="{{!state}}">
+    <view class="setup">
+      <view class="setup-title">设置目标分</view>
+      <view class="setup-copy">有人累计达到目标分后，整场游戏结束。每局开始前重新洗牌。</view>
+      <view class="target-row">
+        <button
+          wx:for="{{targetOptions}}"
+          wx:key="*this"
+          class="target-button {{selectedTargetScore === item ? 'selected' : ''}}"
+          data-score="{{item}}"
+          bindtap="chooseTargetScore"
+        >{{item}}</button>
+      </view>
+      <button class="primary wide" bindtap="startGame">开始游戏</button>
+      <view class="rule-note">可出单张、对子、三张、四张、四张顺子；有牌能接必须出，不能不要。</view>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="table-field">
+      <view class="opponent seat-left">{{players[1].name}} · {{players[1].hand.length}} 张 · {{players[1].score}} 分</view>
+      <view class="opponent seat-top">{{players[2].name}} · {{players[2].hand.length}} 张 · {{players[2].score}} 分</view>
+      <view class="opponent seat-right">{{players[3].name}} · {{players[3].hand.length}} 张 · {{players[3].score}} 分</view>
+
+      <view class="center-stage">
+        <view class="pile">
+          <view class="pile-label">上一手</view>
+          <view class="pile-text">{{lastPlayText}}</view>
+        </view>
+
+        <view class="message">{{message}}</view>
+
+        <view wx:if="{{roundResult.length > 0}}" class="score-panel">
+          <view class="panel-title">本局计分</view>
+          <view wx:for="{{roundResult}}" wx:key="playerId" class="score-line">
+            {{item.playerName}} +{{item.penalty}}，总分 {{item.total}}
+          </view>
+        </view>
+
+        <view wx:if="{{finalSettlement}}" class="settlement">
+          <view class="panel-title">最终结算</view>
+          <view wx:for="{{finalSettlement.net}}" wx:key="playerId" class="score-line {{item.amount >= 0 ? 'receive' : 'pay'}}">
+            {{item.playerName}} 总分 {{item.score}}，净结算 {{item.amountText}}
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="hand-title">{{myTurn ? '轮到你' : '你的手牌'}} · {{players[0].hand.length}} 张 · {{players[0].score}} 分</view>
+    <scroll-view class="hand-scroll" scroll-x="true">
+      <view class="hand-board">
+        <view
+          wx:for="{{handGroups}}"
+          wx:for-item="group"
+          wx:key="key"
+          class="hand-group"
+          style="height: {{group.heightRpx}}rpx"
+        >
+          <view
+            wx:for="{{group.cards}}"
+            wx:for-item="card"
+            wx:key="id"
+            class="card {{card.color}} {{card.selected ? 'selected-card' : ''}}"
+            style="top: {{card.stackTopRpx}}rpx"
+            data-card-id="{{card.id}}"
+            bindtap="toggleCard"
+          >
+            <view class="rank">{{card.rank}}</view>
+            <view class="suit">{{card.suit}}</view>
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+
+    <view class="actions">
+      <button class="primary" disabled="{{!myTurn}}" bindtap="playSelected">出牌</button>
+      <button class="secondary" disabled="{{!myTurn}}" bindtap="passTurn">过牌</button>
+      <button class="secondary" bindtap="resetRound">{{resetLabel}}</button>
+    </view>
+  </block>
+</view>

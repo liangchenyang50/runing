@@ -1,0 +1,13 @@
+{
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "四人扑克",
+    "navigationBarBackgroundColor": "#103f31",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#103f31"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
