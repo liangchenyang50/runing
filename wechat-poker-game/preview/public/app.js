@@ -156,7 +156,7 @@ function render(state) {
   app.innerHTML = `
     <section class="orientation-gate" aria-live="polite">
       <span class="orientation-icon" aria-hidden="true">↻</span>
-      <strong>请横屏游玩</strong>
+      <strong>竖屏体验更佳</strong>
     </section>
     <section class="shell">${content}${profileEditorOpen ? renderProfileEditor() : ""}</section>
   `;
