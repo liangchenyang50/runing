@@ -386,7 +386,7 @@ function render() {
   const myTurn = state.phase === "playing" && state.currentPlayer === 0;
   makeButton("出牌", 20, buttonTop, buttonW, 54, playSelected, myTurn);
   makeButton("过牌", 20 + buttonW + gap, buttonTop, buttonW, 54, passTurn, myTurn);
-  makeButton(state.phase === "finished" ? "下一局" : state.phase === "gameOver" ? "新游戏" : "重开", 20 + (buttonW + gap) * 2, buttonTop, buttonW, 54, resetRound, true);
+  makeButton(state.phase === "finished" ? "下一轮" : state.phase === "gameOver" ? "新游戏" : "重开", 20 + (buttonW + gap) * 2, buttonTop, buttonW, 54, resetRound, true);
 }
 
 function handleTouch(x, y) {

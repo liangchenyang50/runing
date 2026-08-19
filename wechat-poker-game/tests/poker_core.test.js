@@ -145,6 +145,7 @@ const p0FourTwos = cardsOf("2", 4)
 const specialGame = poker.createGame({ deck: deckForPlayerZero(p0FourTwos), targetScore: 500 });
 assert.strictEqual(specialGame.phase, "finished", "four twos ends the round immediately");
 assert.strictEqual(specialGame.specialDeal.type, "four_twos", "four twos special is detected");
+assert.match(specialGame.message, /下一轮/, "a finished round clearly invites the next round");
 assert.deepStrictEqual(
   specialGame.players.map(function score(player) { return player.score; }),
   [0, 52, 52, 52],

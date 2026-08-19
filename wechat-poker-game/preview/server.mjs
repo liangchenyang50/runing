@@ -118,7 +118,7 @@ export function createPreviewApp() {
       finalSettlement: formatSettlement(state.finalSettlement),
       myTurn: state.phase === "playing" && state.currentPlayer === 0,
       phase: state.phase,
-      resetLabel: state.phase === "finished" ? "下一局" : state.phase === "gameOver" ? "新游戏" : "重开",
+      resetLabel: state.phase === "finished" ? "下一轮" : state.phase === "gameOver" ? "新游戏" : "重开",
       turnCount: state.turnCount,
       specialDeal: state.specialDeal,
       winnerId: state.winnerId

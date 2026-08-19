@@ -465,6 +465,10 @@ button:disabled {
   transform: translate(-50%, -50%);
 }
 
+.round-finished .center-stage {
+  z-index: 16;
+}
+
 .turn-message {
   padding: 8px 12px;
   border: 1px solid rgba(202, 232, 255, 0.45);
@@ -506,6 +510,26 @@ button:disabled {
 
 .receive { color: #aaf0cd; }
 .pay { color: #ffb6ac; }
+
+.round-continue {
+  display: block;
+  min-width: 144px;
+  height: 39px;
+  margin: 8px auto 0;
+  padding: 0 20px;
+  border: 2px solid rgba(255, 255, 255, 0.78);
+  border-radius: 20px;
+  background: #3da728;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 900;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 2px rgba(255, 255, 255, 0.34), inset 0 -3px rgba(0, 0, 0, 0.18), 0 3px 6px rgba(0, 18, 55, 0.38);
+}
+
+.round-continue:hover {
+  filter: brightness(1.08);
+}
 
 .action-dock {
   position: absolute;
@@ -907,6 +931,7 @@ button:disabled {
   .turn-message { padding: 5px 8px; font-size: 9px; }
   .panel-title { font-size: 10px; }
   .score-line { font-size: 8px; }
+  .round-continue { min-width: 104px; height: 29px; margin-top: 5px; padding: 0 13px; border-width: 1px; font-size: 12px; }
   .action-dock { gap: 8px; }
   .game-button { min-width: 100px; height: 42px; padding: 0 16px; border-radius: 21px; font-size: 19px; }
   .pass-control { padding: 5px 6px; font-size: 9px; }

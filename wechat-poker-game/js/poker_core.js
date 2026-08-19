@@ -262,7 +262,7 @@ function playSelected(state) {
       state.finalSettlement = calculateFinalSettlement(state);
       state.message = over.message + " 已达到目标分，整场结束。";
     } else {
-      state.message = over.message + " 点击下一局，赢家先出。";
+      state.message = over.message + " 点击下一轮，赢家先出。";
     }
     return state;
   }
@@ -407,7 +407,7 @@ function applySpecialDealIfNeeded(state) {
     state.finalSettlement = calculateFinalSettlement(state);
     state.message = special.message + " 已达到目标分，整场结束。";
   } else {
-    state.message = special.message + " 点击下一局，由触发者先出。";
+    state.message = special.message + " 点击下一轮，由触发者先出。";
   }
 
   return state;

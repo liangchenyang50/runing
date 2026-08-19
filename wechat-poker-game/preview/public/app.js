@@ -80,7 +80,7 @@ function renderSetup(state) {
 function renderGame(state) {
   const players = state.players;
   return `
-    <section class="game-board">
+    <section class="game-board ${state.phase !== "playing" ? "round-finished" : ""}">
       <header class="game-header">
         <div class="round-sign"><strong>第 ${state.turnCount} 手</strong><span>目标 ${state.targetScore} 分</span></div>
         <div class="table-title">四人扑克 <span>欢乐牌桌</span></div>
@@ -97,13 +97,10 @@ function renderGame(state) {
         <div class="turn-message ${clientNotice ? "has-notice" : ""}">${escapeHtml(clientNotice || state.message)}</div>
         ${renderRoundScore(state.roundResult)}
         ${renderSettlement(state.finalSettlement)}
+        ${renderRoundControl(state)}
       </section>
 
-      <section class="action-dock" aria-label="出牌操作">
-        <button class="game-button game-button-hint" data-action="hint" ${state.myTurn ? "" : "disabled"}>提示</button>
-        <button class="game-button game-button-play" data-action="play" ${state.myTurn ? "" : "disabled"}>出牌</button>
-        <button class="pass-control" data-action="pass" ${state.myTurn ? "" : "disabled"}>过牌</button>
-      </section>
+      ${state.phase === "playing" ? renderGameActions(state) : ""}
 
       <section class="emoji-dock">
         ${emojiPickerOpen ? renderEmojiPicker() : ""}
@@ -161,6 +158,27 @@ function renderTableActions(actions) {
     return '<section class="table-action table-action-empty">等待首出</section>';
   }
   return actions.map((action) => renderTableAction(action)).join("");
+}
+
+function renderGameActions(state) {
+  return `
+    <section class="action-dock" aria-label="出牌操作">
+      <button class="game-button game-button-hint" data-action="hint" ${state.myTurn ? "" : "disabled"}>提示</button>
+      <button class="game-button game-button-play" data-action="play" ${state.myTurn ? "" : "disabled"}>出牌</button>
+      <button class="pass-control" data-action="pass" ${state.myTurn ? "" : "disabled"}>过牌</button>
+    </section>
+  `;
+}
+
+function renderRoundControl(state) {
+  if (state.phase === "playing") {
+    return "";
+  }
+  return `
+    <button class="round-continue" data-action="reset">
+      ${escapeHtml(state.resetLabel)}
+    </button>
+  `;
 }
 
 function renderTableAction(action) {
