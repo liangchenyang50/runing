@@ -29,10 +29,25 @@ export function createPreviewApp() {
 
   function runAutoPlayers() {
     let guard = 0;
-    while (state && state.phase === "playing" && state.currentPlayer !== 0 && guard < 32) {
-      poker.autoPlayOneCard(state);
+    while (state && state.phase === "playing" && guard < 32) {
+      if (state.currentPlayer === 0) {
+        if (!shouldAutoPassLocalPlayer()) {
+          break;
+        }
+        poker.passTurn(state);
+      } else {
+        poker.autoPlayOneCard(state);
+      }
       guard += 1;
     }
+  }
+
+  function shouldAutoPassLocalPlayer() {
+    if (!state || !state.trick || !state.trick.lastPlay) {
+      return false;
+    }
+    const moves = rules.findLegalMoves(state.players[0].hand, state.trick.lastPlay);
+    return moves.length === 0;
   }
 
   function setTarget(score) {
@@ -78,6 +93,7 @@ export function createPreviewApp() {
         players: [],
         message: "",
         lastPlayText: "等待出牌",
+        tableActions: [],
         roundResult: [],
         finalSettlement: null,
         myTurn: false,
@@ -97,6 +113,7 @@ export function createPreviewApp() {
       message: state.message,
       lastPlayText: last ? `${last.playerName}：${last.label}` : "等待出牌",
       lastPlay: formatLastPlay(state.trick && state.trick.lastPlay),
+      tableActions: formatTableActions(state),
       roundResult: state.roundResult || [],
       finalSettlement: formatSettlement(state.finalSettlement),
       myTurn: state.phase === "playing" && state.currentPlayer === 0,
@@ -131,6 +148,23 @@ export function createPreviewApp() {
       label: lastPlay.label,
       cards: lastPlay.cards
     };
+  }
+
+  function formatTableActions(gameState) {
+    const currentActions = gameState.trick && Array.isArray(gameState.trick.actions)
+      ? gameState.trick.actions
+      : [];
+    const visibleActions = currentActions.length > 0
+      ? currentActions
+      : gameState.previousTrickActions || [];
+
+    return visibleActions.map((action) => ({
+      playerId: action.playerId,
+      playerName: action.playerName,
+      kind: action.kind,
+      label: action.label,
+      cards: action.cards
+    }));
   }
 
   function toggleCard(cardId) {

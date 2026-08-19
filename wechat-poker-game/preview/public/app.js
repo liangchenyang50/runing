@@ -91,7 +91,7 @@ function renderGame(state) {
       ${renderSeat(players[2], "top")}
       ${renderSeat(players[3], "right")}
 
-      ${renderPlayedCards(state.lastPlay)}
+      ${renderTableActions(state.tableActions)}
 
       <section class="center-stage">
         <div class="turn-message ${clientNotice ? "has-notice" : ""}">${escapeHtml(clientNotice || state.message)}</div>
@@ -156,20 +156,21 @@ function renderCardBacks(cardCount) {
   return Array.from({ length: shown }, (_, index) => `<i class="card-back card-back-${index}"></i>`).join("");
 }
 
-function renderPlayedCards(lastPlay) {
-  if (!lastPlay) {
-    return `
-      <section class="played-cards played-empty">
-        <span>等待首出</span>
-      </section>
-    `;
+function renderTableActions(actions) {
+  if (!actions || actions.length === 0) {
+    return '<section class="table-action table-action-empty">等待首出</section>';
   }
+  return actions.map((action) => renderTableAction(action)).join("");
+}
+
+function renderTableAction(action) {
+  const isPass = action.kind === "pass";
   return `
-    <section class="played-cards played-by-${lastPlay.playerId}">
-      <div class="played-label">${escapeHtml(lastPlay.playerName)} 出牌 · ${escapeHtml(lastPlay.label)}</div>
-      <div class="played-hand">
-        ${lastPlay.cards.map((card) => renderTableCard(card)).join("")}
-      </div>
+    <section class="table-action table-action-${action.playerId} ${isPass ? "is-pass" : "is-play"}">
+      <div class="table-action-label">${escapeHtml(action.playerName)}${isPass ? "" : " 出牌"}</div>
+      ${isPass
+        ? '<div class="pass-stamp">要不起</div>'
+        : `<div class="played-hand">${(action.cards || []).map((card) => renderTableCard(card)).join("")}</div>`}
     </section>
   `;
 }

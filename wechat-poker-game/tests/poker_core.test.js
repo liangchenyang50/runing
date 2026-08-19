@@ -88,6 +88,7 @@ poker.playSelected(flow);
 assert.strictEqual(flow.players[0].hand.length, 2, "playing a pair removes two cards");
 assert.strictEqual(flow.discardPile[0].combo.type, "pair", "played combo is recorded");
 assert.strictEqual(flow.currentPlayer, 3, "turn moves from local player to right player");
+assert.strictEqual(flow.trick.actions[0].playerId, 0, "local play is stored for the table");
 
 poker.passTurn(flow);
 assert.strictEqual(flow.currentPlayer, 3, "right player cannot pass when a response is available");
@@ -105,6 +106,25 @@ assert.strictEqual(flow.currentPlayer, 1, "opposite player hands the turn to the
 poker.selectCardIds(flow, 1, [flow.players[1].hand[0].id, flow.players[1].hand[1].id]);
 poker.playSelected(flow);
 assert.strictEqual(flow.currentPlayer, 0, "left player hands the turn back to the local player");
+assert.deepStrictEqual(
+  flow.trick.actions.map(function playerId(action) { return action.playerId; }),
+  [0, 3, 2, 1],
+  "every player play is retained in clockwise table order"
+);
+
+const autoPassFlow = poker.createGame({ rng: function fixedRandom() { return 0.51; }, targetScore: 200 });
+autoPassFlow.players[3].hand = [makeCard("3")];
+autoPassFlow.currentPlayer = 3;
+autoPassFlow.trick = {
+  leaderId: 0,
+  lastPlayerId: 0,
+  lastPlay: { combo: rules.analyzeCards(cardsOf("9", 2)) },
+  passesSincePlay: 0,
+  actions: []
+};
+poker.autoPlayOneCard(autoPassFlow);
+assert.strictEqual(autoPassFlow.currentPlayer, 2, "auto player skips to the opposite player when it cannot beat the last play");
+assert.strictEqual(autoPassFlow.trick.actions[0].label, "要不起", "an automatic skip records the visible pass label");
 
 const singleFlow = poker.createGame({ rng: function fixedRandom() { return 0.7; }, targetScore: 200 });
 singleFlow.players[0].hand = [makeCard("3")];

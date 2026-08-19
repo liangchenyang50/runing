@@ -106,8 +106,10 @@ function createGame(options) {
       leaderId: firstPlayer,
       lastPlayerId: null,
       lastPlay: null,
-      passesSincePlay: 0
+      passesSincePlay: 0,
+      actions: []
     },
+    previousTrickActions: [],
     phase: "playing",
     message: players[firstPlayer].name + " 先出牌。请选择单张、对子、三张、四张，或四张顺子。",
     winnerId: null,
@@ -231,6 +233,17 @@ function playSelected(state) {
     combo: decision.combo
   });
 
+  if (state.trick && !state.trick.lastPlay) {
+    state.previousTrickActions = [];
+  }
+  recordTrickAction(state, {
+    playerId: player.id,
+    playerName: player.name,
+    kind: "play",
+    label: rules.getPlayLabel(playedCards),
+    cards: playedCards
+  });
+
   state.trick.lastPlayerId = player.id;
   state.trick.lastPlay = state.discardPile[state.discardPile.length - 1];
   state.trick.passesSincePlay = 0;
@@ -286,17 +299,26 @@ function passTurn(state) {
     cards: [],
     label: "过"
   });
+  recordTrickAction(state, {
+    playerId: player.id,
+    playerName: player.name,
+    kind: "pass",
+    label: "要不起",
+    cards: []
+  });
   clearSelection(state);
 
   if (lastPlay && state.trick) {
     state.trick.passesSincePlay += 1;
     if (state.trick.passesSincePlay >= state.players.length - 1) {
+      state.previousTrickActions = (state.trick.actions || []).slice();
       state.currentPlayer = state.trick.lastPlayerId;
       state.trick = {
         leaderId: state.trick.lastPlayerId,
         lastPlayerId: null,
         lastPlay: null,
-        passesSincePlay: 0
+        passesSincePlay: 0,
+        actions: []
       };
       state.turnCount += 1;
       state.message = "一轮结束，" + state.players[state.currentPlayer].name + " 获得新一轮先手。";
@@ -314,6 +336,16 @@ function nextTurn(state) {
   state.currentPlayer = (state.currentPlayer + state.players.length - 1) % state.players.length;
   state.turnCount += 1;
   return state;
+}
+
+function recordTrickAction(state, action) {
+  if (!state || !state.trick) {
+    return;
+  }
+  if (!Array.isArray(state.trick.actions)) {
+    state.trick.actions = [];
+  }
+  state.trick.actions.push(action);
 }
 
 function autoPlayOneCard(state) {

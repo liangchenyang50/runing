@@ -340,18 +340,17 @@ button:disabled {
 .card-back-3 { left: 36px; transform: rotate(4deg); }
 .card-back-4 { left: 48px; transform: rotate(7deg); }
 
-.played-cards {
+.table-action {
   position: absolute;
   z-index: 5;
-  top: 31%;
-  left: 50%;
-  min-width: 128px;
+  min-width: 82px;
   transform: translateX(-50%);
   text-align: center;
 }
 
-.played-empty {
+.table-action-empty {
   top: 39%;
+  left: 50%;
   padding: 8px 12px;
   border: 1px solid rgba(191, 231, 255, 0.36);
   border-radius: 16px;
@@ -360,18 +359,34 @@ button:disabled {
   font-size: 12px;
 }
 
-.played-by-1 { top: 38%; left: 28%; }
-.played-by-2 { top: 27%; }
-.played-by-3 { top: 38%; left: 72%; }
-.played-by-0 { top: 43%; }
+.table-action-1 { top: 40%; left: 28%; }
+.table-action-2 { top: 23%; left: 50%; }
+.table-action-3 { top: 40%; left: 72%; }
+.table-action-0 { top: 53%; left: 23%; }
 
-.played-label {
+.table-action-label {
   margin-bottom: 5px;
   color: #e3f2ff;
   font-size: 11px;
   font-weight: 750;
   text-shadow: 0 1px 2px rgba(0, 23, 71, 0.74);
   white-space: nowrap;
+}
+
+.pass-stamp {
+  display: inline-flex;
+  min-width: 76px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border: 2px solid rgba(255, 230, 168, 0.82);
+  border-radius: 17px;
+  background: rgba(8, 33, 82, 0.82);
+  color: #ffe39a;
+  font-size: 17px;
+  font-weight: 900;
+  text-shadow: 0 1px 2px rgba(0, 20, 59, 0.7);
 }
 
 .played-hand {
@@ -881,7 +896,8 @@ button:disabled {
   .card-back-2 { left: 18px; }
   .card-back-3 { left: 27px; }
   .card-back-4 { left: 36px; }
-  .played-label { font-size: 8px; }
+  .table-action-label { margin-bottom: 3px; font-size: 8px; }
+  .pass-stamp { min-width: 55px; min-height: 24px; padding: 2px 6px; border-width: 1px; font-size: 12px; }
   .table-card { width: 39px; }
   .played-hand .table-card + .table-card { margin-left: -15px; }
   .table-card .card-corner b { font-size: 15px; }

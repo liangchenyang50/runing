@@ -47,10 +47,13 @@ try {
   const selectedCard = toggled.players[0].hand.find((card) => card.id === firstCardId);
   assert.equal(selectedCard.selected, true, "toggle selects a local card");
 
+  await request("/api/hint", {});
   const played = await request("/api/play", {});
   assert.equal(typeof played.message, "string", "play returns updated state");
   assert.notEqual(played.message, "", "play updates message even if combo is invalid");
   assert.equal(played.lastPlay === null || Array.isArray(played.lastPlay.cards), true, "play exposes visible cards for the table");
+  assert.equal(Array.isArray(played.tableActions), true, "play returns a visible action for each seat");
+  assert.equal(played.tableActions.length > 0, true, "the current trick keeps its table actions");
 
   const page = await fetch(`${baseUrl}/`);
   assert.equal(page.ok, true, "preview page loads");
