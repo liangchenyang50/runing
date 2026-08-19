@@ -4,7 +4,8 @@ import { promisify } from "node:util";
 const deriveKey = promisify(pbkdf2);
 const ACCOUNT_RE = /^[a-z][a-z0-9_.-]{3,23}$/;
 const MAX_PASSWORD_LENGTH = 64;
-const PASSWORD_ITERATIONS = 210000;
+const PASSWORD_ITERATIONS = 100000;
+const LEGACY_PASSWORD_ITERATIONS = 210000;
 const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 const MAX_HISTORY = 5;
 const PROFILE_LOCK_MS = 1000 * 60 * 60 * 24;
@@ -259,16 +260,20 @@ function sanitizeAvatar(value) {
   return Array.from(avatar).slice(0, 4).join("") || "😀";
 }
 
-async function hashPassword(password, salt = randomBytes(16)) {
-  const hash = await deriveKey(password, salt, PASSWORD_ITERATIONS, 32, "sha256");
-  return { salt: salt.toString("base64"), hash: hash.toString("base64") };
+async function hashPassword(password, salt = randomBytes(16), iterations = PASSWORD_ITERATIONS) {
+  const hash = await deriveKey(password, salt, iterations, 32, "sha256");
+  return { salt: salt.toString("base64"), hash: hash.toString("base64"), iterations };
 }
 
 async function verifyPassword(password, stored) {
   if (!stored) {
     return false;
   }
-  const candidate = await hashPassword(password, Buffer.from(stored.salt, "base64"));
+  const iterations = Number(stored.iterations || LEGACY_PASSWORD_ITERATIONS);
+  if (!Number.isInteger(iterations) || iterations < 1) {
+    return false;
+  }
+  const candidate = await hashPassword(password, Buffer.from(stored.salt, "base64"), iterations);
   const expected = Buffer.from(stored.hash, "base64");
   const actual = Buffer.from(candidate.hash, "base64");
   return expected.length === actual.length && timingSafeEqual(expected, actual);
