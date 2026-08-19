@@ -23,7 +23,7 @@ export default {
     try {
       if (url.pathname === "/runtime-config.js") {
         return new Response(
-          'window.__POKER_RUNTIME__ = Object.freeze({ transport: "websocket", supportsSolo: false });\n',
+          'window.__POKER_RUNTIME__ = Object.freeze({ transport: "websocket", supportsSolo: false, localDebug: false });\n',
           {
             headers: {
               "content-type": "text/javascript; charset=utf-8",

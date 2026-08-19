@@ -29,6 +29,7 @@ const SESSION_KEY = "four-poker-room-session-v1";
 const RUNTIME = window.__POKER_RUNTIME__ || {};
 const REALTIME_TRANSPORT = RUNTIME.transport === "websocket" ? "websocket" : "sse";
 const SUPPORTS_SOLO = RUNTIME.supportsSolo !== false;
+const LOCAL_DEBUG = RUNTIME.localDebug === true;
 
 let currentState = null;
 let clientNotice = "";
@@ -152,7 +153,13 @@ function render(state) {
   const content = currentState.mode === "room"
     ? currentState.phase === "lobby" ? renderRoomLobby(currentState) : renderGame(currentState)
     : currentState.active ? renderGame(currentState) : isSoloSetup(currentState) ? renderSoloSetup(currentState) : renderHome();
-  app.innerHTML = `<section class="shell">${content}${profileEditorOpen ? renderProfileEditor() : ""}</section>`;
+  app.innerHTML = `
+    <section class="orientation-gate" aria-live="polite">
+      <span class="orientation-icon" aria-hidden="true">↻</span>
+      <strong>请横屏游玩</strong>
+    </section>
+    <section class="shell">${content}${profileEditorOpen ? renderProfileEditor() : ""}</section>
+  `;
   bindEvents(currentState);
   syncRoomEvents(currentState);
   scheduleReactionExpiry(currentState);
@@ -845,6 +852,14 @@ function bindEvents(state) {
 }
 
 async function initialize() {
+  const debugView = new URL(window.location.href).searchParams.get("debug");
+  if (LOCAL_DEBUG && debugView === "solo") {
+    clearSession();
+    clientNotice = "";
+    render(await soloApi("/api/start", {}));
+    return;
+  }
+
   if (session) {
     try {
       const restored = await requestJson(roomStateUrl());

@@ -8,8 +8,9 @@
 }
 
 body {
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
   overflow: hidden;
   background: #0a255d;
@@ -31,7 +32,11 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100vw;
   min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   padding: 12px;
   overflow: hidden;
   background:
@@ -40,8 +45,8 @@ button:disabled {
 }
 
 .shell {
-  width: min(1280px, calc(100vw - 24px));
-  max-height: calc(100vh - 24px);
+  width: min(1280px, calc(100vw - 24px), calc((100dvh - 24px) / 9 * 16));
+  height: min(720px, calc(100dvh - 24px), calc((100vw - 24px) / 16 * 9));
   aspect-ratio: 16 / 9;
   overflow: hidden;
   border: 2px solid rgba(170, 218, 255, 0.6);
@@ -894,6 +899,10 @@ button:disabled {
   text-align: center;
 }
 
+.orientation-gate {
+  display: none;
+}
+
 @media (max-width: 800px), (max-height: 600px) {
   .round-sign,
   .round-sign strong,
@@ -1466,4 +1475,67 @@ button:disabled {
   .avatar-choice { height: 25px; border-radius: 3px; font-size: 15px; }
   .upload-avatar-button,
   .profile-save { height: 28px; margin-top: 6px; border-radius: 4px; font-size: 9px; }
+}
+
+/* Phones use the complete horizontal visual viewport instead of a centered 16:9 card. */
+@media (orientation: landscape) and (max-height: 600px) {
+  .table {
+    padding-top: max(6px, env(safe-area-inset-top));
+    padding-right: max(6px, env(safe-area-inset-right));
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+    padding-left: max(6px, env(safe-area-inset-left));
+  }
+
+  .shell {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    aspect-ratio: auto;
+    border-radius: 8px;
+  }
+}
+
+@media (orientation: portrait) and (max-width: 900px) {
+  .table {
+    display: block;
+    padding: 0;
+  }
+
+  .shell {
+    display: none;
+  }
+
+  .orientation-gate {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 16px;
+    padding: 24px;
+    background:
+      repeating-linear-gradient(125deg, rgba(255, 255, 255, 0.025) 0 2px, transparent 2px 7px),
+      linear-gradient(145deg, #112e75 0%, #0c3f86 56%, #046e70 100%);
+    color: #f7fbff;
+    text-align: center;
+  }
+
+  .orientation-icon {
+    display: grid;
+    width: 68px;
+    height: 68px;
+    place-items: center;
+    border: 2px solid rgba(214, 239, 255, 0.78);
+    border-radius: 10px;
+    color: #ffdc79;
+    font-size: 48px;
+    font-weight: 900;
+    line-height: 1;
+  }
+
+  .orientation-gate strong {
+    font-size: 20px;
+    font-weight: 900;
+  }
 }

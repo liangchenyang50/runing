@@ -283,11 +283,13 @@ export async function listenWithFallback(startPort = DEFAULT_PORT, host = "127.0
     const server = createPreviewServer();
     try {
       await listen(server, port, host);
+      const address = server.address();
+      const boundPort = address && typeof address === "object" ? address.port : port;
       return {
         server,
-        port,
+        port: boundPort,
         host,
-        url: `http://${host}:${port}/`
+        url: `http://${host}:${boundPort}/`
       };
     } catch (error) {
       if (error.code !== "EADDRINUSE") {
