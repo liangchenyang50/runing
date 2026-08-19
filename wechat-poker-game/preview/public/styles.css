@@ -231,8 +231,8 @@ button:disabled {
   z-index: 2;
   display: grid;
   flex: 0 0 auto;
-  width: 58px;
-  height: 58px;
+  width: 62px;
+  height: 62px;
   place-items: center;
   overflow: hidden;
   border: 3px solid #e9f5ff;
@@ -803,8 +803,8 @@ button:disabled {
 }
 
 .my-avatar {
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   border-color: #fff7d1;
   background: #425e86;
   font-size: 19px;
@@ -1100,7 +1100,7 @@ button:disabled {
   .room-header-controls { gap: 4px; }
   .dismiss-control { min-width: 36px; height: 29px; padding: 0 5px; font-size: 9px; }
   .seat { min-width: 116px; min-height: 47px; }
-  .avatar { width: 42px; height: 42px; border-width: 2px; border-radius: 5px; font-size: 16px; }
+  .avatar { width: 46px; height: 46px; border-width: 2px; border-radius: 5px; font-size: 16px; }
   .seat-copy { min-width: 56px; margin-left: 4px; padding: 3px 4px; }
   .seat-right .seat-copy { margin-right: 4px; }
   .seat-copy strong { font-size: 11px; }
@@ -1146,7 +1146,7 @@ button:disabled {
   .emoji-picker button { width: 20px; height: 20px; font-size: 13px; }
   .my-zone { left: 2.2%; right: 5%; height: 28%; }
   .my-profile { width: 102px; min-height: 40px; }
-  .my-avatar { width: 37px; height: 37px; border-width: 2px; font-size: 13px; }
+  .my-avatar { width: 41px; height: 41px; border-width: 2px; font-size: 13px; }
   .my-profile-copy { margin-left: 4px; }
   .my-profile-copy strong { font-size: 10px; }
   .my-profile-copy span { width: 58px; font-size: 7px; }
@@ -1196,6 +1196,33 @@ button:disabled {
   color: #ffffff;
   font-size: 12px;
   font-weight: 750;
+}
+
+.header-account-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-control {
+  min-width: 44px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid rgba(202, 232, 255, 0.58);
+  border-radius: 6px;
+  background: rgba(8, 30, 76, 0.72);
+  color: #f8d774;
+  font-size: 12px;
+  font-weight: 850;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.history-control:hover {
+  background: rgba(23, 70, 142, 0.82);
+}
+
+.history-control-compact {
+  min-width: 42px;
 }
 
 .header-avatar {
@@ -1690,7 +1717,8 @@ button:disabled {
 }
 
 .upload-avatar-button,
-.profile-save {
+.profile-save,
+.profile-logout {
   display: grid;
   width: 100%;
   height: 38px;
@@ -1711,7 +1739,406 @@ button:disabled {
   background: #329c60;
 }
 
+.profile-logout {
+  background: rgba(120, 41, 45, 0.82);
+}
+
+.auth-panel {
+  position: absolute;
+  top: 51%;
+  left: 63%;
+  width: min(340px, 43%);
+  padding: 16px;
+  border: 1px solid rgba(221, 243, 255, 0.78);
+  border-radius: 8px;
+  background: rgba(9, 43, 102, 0.86);
+  box-shadow: 0 15px 40px rgba(0, 9, 42, 0.5), inset 0 1px rgba(255, 255, 255, 0.1);
+  text-align: left;
+  transform: translate(-50%, -46%);
+}
+
+.auth-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(214, 238, 255, 0.5);
+  border-radius: 5px;
+}
+
+.auth-switch button {
+  height: 34px;
+  background: rgba(4, 27, 73, 0.72);
+  color: #cde3f7;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.auth-switch button + button {
+  border-left: 1px solid rgba(214, 238, 255, 0.28);
+}
+
+.auth-switch button.selected {
+  background: #2a956b;
+  color: #ffffff;
+}
+
+.auth-panel h1 {
+  margin: 14px 0 6px;
+  color: #ffffff;
+  font-size: 25px;
+  font-weight: 900;
+  text-align: center;
+  text-shadow: 0 2px 3px rgba(0, 20, 64, 0.62);
+}
+
+.auth-panel input {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(216, 239, 255, 0.68);
+  border-radius: 5px;
+  outline: 0;
+  background: rgba(4, 27, 73, 0.74);
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.auth-panel input:focus,
+.profile-editor input:focus {
+  border-color: #ffdc70;
+  box-shadow: 0 0 0 2px rgba(255, 216, 112, 0.18);
+}
+
+.auth-submit {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  margin-top: 14px;
+  font-size: 20px;
+}
+
+.history-modal {
+  position: absolute;
+  z-index: 130;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(1, 15, 54, 0.7);
+}
+
+.history-panel {
+  width: min(760px, 94%);
+  max-height: 92%;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid rgba(221, 243, 255, 0.78);
+  border-radius: 8px;
+  background: #123a7d;
+  box-shadow: 0 15px 40px rgba(0, 9, 42, 0.58);
+}
+
+.history-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.history-panel h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.history-empty {
+  margin: 28px auto;
+  color: #d5e9ff;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.history-record {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 11px;
+  border: 1px solid rgba(214, 238, 255, 0.42);
+  border-radius: 6px;
+  background: rgba(4, 27, 73, 0.62);
+  color: #ffffff;
+  text-align: left;
+}
+
+.history-record:hover {
+  border-color: rgba(255, 220, 112, 0.8);
+  background: rgba(20, 65, 133, 0.78);
+}
+
+.history-record-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.history-record-main strong,
+.history-record-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-record-main strong {
+  font-size: 13px;
+}
+
+.history-record-main small {
+  color: #c9def3;
+  font-size: 11px;
+}
+
+.history-record-result {
+  flex: 0 0 auto;
+  margin-left: 10px;
+  color: #dcecff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-record-result.winner {
+  color: #ffdf79;
+}
+
+.replay-meta {
+  margin-bottom: 8px;
+  color: #dcecff;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.replay-board {
+  position: relative;
+  height: 310px;
+  overflow: hidden;
+  border: 1px solid rgba(196, 231, 255, 0.46);
+  border-radius: 7px;
+  background:
+    repeating-linear-gradient(120deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 5px),
+    linear-gradient(145deg, #103876, #106879);
+}
+
+.replay-board::before {
+  position: absolute;
+  inset: 7% 4% 4%;
+  border: 1px solid rgba(191, 231, 255, 0.34);
+  border-radius: 46% 46% 30% 30%;
+  content: "";
+  pointer-events: none;
+}
+
+.replay-seat {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  max-width: 37%;
+}
+
+.replay-seat-top {
+  top: 9px;
+  left: 50%;
+  justify-items: center;
+  transform: translateX(-50%);
+}
+
+.replay-seat-left {
+  top: 43%;
+  left: 10px;
+}
+
+.replay-seat-right {
+  top: 43%;
+  right: 10px;
+  justify-items: end;
+}
+
+.replay-seat-bottom {
+  bottom: 9px;
+  left: 50%;
+  justify-items: center;
+  transform: translateX(-50%);
+}
+
+.replay-seat-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 5px 3px 3px;
+  border-radius: 5px;
+  background: rgba(3, 24, 68, 0.68);
+}
+
+.replay-seat-title span {
+  display: grid;
+  min-width: 0;
+}
+
+.replay-seat-title strong,
+.replay-seat-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-seat-title strong {
+  color: #ffffff;
+  font-size: 11px;
+}
+
+.replay-seat-title small {
+  color: #c7e0f6;
+  font-size: 9px;
+}
+
+.replay-avatar {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(240, 250, 255, 0.92);
+  border-radius: 4px;
+  background: #4d789d;
+  font-size: 17px;
+}
+
+.replay-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.replay-hand,
+.replay-played-hand {
+  display: flex;
+  align-items: flex-end;
+}
+
+.replay-seat-right .replay-hand {
+  justify-content: flex-end;
+}
+
+.replay-card {
+  width: 38px;
+  height: 55px;
+  border-radius: 4px;
+}
+
+.replay-card + .replay-card {
+  margin-left: -20px;
+}
+
+.replay-card .card-corner-top {
+  top: 3px;
+  left: 3px;
+}
+
+.replay-card .card-corner b {
+  font-size: 16px;
+}
+
+.replay-card .card-corner i {
+  font-size: 10px;
+}
+
+.replay-card .card-pip {
+  bottom: 4px;
+  font-size: 22px;
+}
+
+.replay-center {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-width: 110px;
+  transform: translate(-50%, -50%);
+  color: #ffffff;
+  font-size: 12px;
+  text-align: center;
+}
+
+.replay-center span {
+  color: #d9ebfb;
+  font-size: 10px;
+}
+
+.replay-played-hand .replay-card + .replay-card {
+  margin-left: -14px;
+}
+
+.replay-progress-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  margin-top: 11px;
+  color: #dcecff;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.replay-progress-row input {
+  width: 100%;
+  accent-color: #f6a542;
+}
+
+.replay-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.replay-icon-button,
+.replay-back-button {
+  height: 34px;
+  border: 1px solid rgba(214, 238, 255, 0.62);
+  border-radius: 5px;
+  background: rgba(4, 27, 73, 0.72);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.replay-icon-button {
+  width: 40px;
+  font-size: 19px;
+}
+
+.replay-back-button {
+  min-width: 96px;
+  padding: 0 12px;
+}
+
 @media (max-width: 800px), (max-height: 600px) {
+  .header-account-tools { gap: 3px; }
+  .history-control { min-width: 31px; height: 27px; padding: 0 4px; border-radius: 4px; font-size: 8px; }
   .header-profile { gap: 4px; padding: 2px 4px 2px 2px; font-size: 8px; }
   .header-avatar { width: 22px; height: 22px; border-radius: 4px; font-size: 14px; }
   .home-content { width: min(300px, 51%); }
@@ -1759,7 +2186,51 @@ button:disabled {
   .avatar-choice-grid { gap: 3px; }
   .avatar-choice { height: 25px; border-radius: 3px; font-size: 15px; }
   .upload-avatar-button,
-  .profile-save { height: 28px; margin-top: 6px; border-radius: 4px; font-size: 9px; }
+  .profile-save,
+  .profile-logout { height: 28px; margin-top: 6px; border-radius: 4px; font-size: 9px; }
+  .auth-panel { width: min(250px, 50%); padding: 10px; border-radius: 5px; }
+  .auth-switch button { height: 25px; font-size: 9px; }
+  .auth-panel h1 { margin: 8px 0 3px; font-size: 17px; }
+  .auth-panel input { height: 28px; padding: 0 7px; border-radius: 4px; font-size: 9px; }
+  .auth-panel .field-label { margin: 5px 0 3px; }
+  .auth-submit { height: 32px; margin-top: 8px; font-size: 13px; }
+  .history-modal { padding: 8px; }
+  .history-panel { width: min(610px, 94%); max-height: 94%; padding: 10px; border-radius: 5px; }
+  .history-panel > header { margin-bottom: 6px; }
+  .history-panel h2 { font-size: 14px; }
+  .history-empty { margin: 16px auto; font-size: 10px; }
+  .history-list { gap: 5px; }
+  .history-record { min-height: 40px; padding: 5px 7px; border-radius: 4px; }
+  .history-record-main { gap: 2px; }
+  .history-record-main strong { font-size: 9px; }
+  .history-record-main small { font-size: 8px; }
+  .history-record-result { margin-left: 5px; font-size: 8px; }
+  .replay-meta { margin-bottom: 5px; font-size: 8px; }
+  .replay-board { height: 215px; border-radius: 5px; }
+  .replay-seat { gap: 2px; max-width: 39%; }
+  .replay-seat-top { top: 5px; }
+  .replay-seat-left { top: 41%; left: 5px; }
+  .replay-seat-right { top: 41%; right: 5px; }
+  .replay-seat-bottom { bottom: 5px; }
+  .replay-seat-title { gap: 3px; padding: 2px; border-radius: 3px; }
+  .replay-seat-title strong { font-size: 8px; }
+  .replay-seat-title small { font-size: 7px; }
+  .replay-avatar { width: 21px; height: 21px; border-radius: 3px; font-size: 12px; }
+  .replay-card { width: 25px; height: 36px; border-radius: 3px; }
+  .replay-card + .replay-card { margin-left: -14px; }
+  .replay-card .card-corner-top { top: 2px; left: 2px; }
+  .replay-card .card-corner b { font-size: 10px; }
+  .replay-card .card-corner i { font-size: 7px; }
+  .replay-card .card-pip { bottom: 2px; font-size: 14px; }
+  .replay-center { gap: 3px; min-width: 70px; font-size: 8px; }
+  .replay-center span { font-size: 7px; }
+  .replay-played-hand .replay-card + .replay-card { margin-left: -9px; }
+  .replay-progress-row { gap: 6px; margin-top: 6px; font-size: 8px; }
+  .replay-controls { gap: 6px; margin-top: 6px; }
+  .replay-icon-button,
+  .replay-back-button { height: 25px; border-radius: 4px; font-size: 8px; }
+  .replay-icon-button { width: 29px; font-size: 14px; }
+  .replay-back-button { min-width: 70px; padding: 0 7px; }
 }
 
 /* Small screens use the complete visual viewport instead of a centered 16:9 card. */
@@ -1957,6 +2428,21 @@ button:disabled {
 
   .home-content h1 {
     font-size: 28px;
+  }
+
+  .auth-panel {
+    top: 57%;
+    left: 50%;
+    width: min(340px, 85%);
+    transform: translate(-50%, -46%);
+  }
+
+  .history-panel {
+    width: min(650px, 94%);
+  }
+
+  .replay-board {
+    height: 285px;
   }
 
   .setup-copy,

@@ -21,14 +21,14 @@ class RoomError extends Error {
   }
 }
 
-export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VOTE_MS, dismissalNoticeMs = DISMISSAL_NOTICE_MS }) {
+export function createRoomService({ poker, rules, accountService, dismissalVoteMs = DISMISSAL_VOTE_MS, dismissalNoticeMs = DISMISSAL_NOTICE_MS }) {
   const rooms = new Map();
   const dismissalTimers = new Map();
 
-  function createRoom(profileInput) {
+  function createRoom(account) {
     removeExpiredRooms();
     const roomCode = createRoomCode();
-    const member = createMember(0, profileInput);
+    const member = createMember(0, account);
     const room = {
       code: roomCode,
       targetScore: 100,
@@ -41,6 +41,8 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
       fourCardWarnedSeats: new Set(),
       dismissalVote: null,
       dismissalNotice: null,
+      replayRound: null,
+      replayRoundNumber: 0,
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
@@ -48,20 +50,20 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
     return { room, member };
   }
 
-  function joinRoom(roomCode, profileInput) {
+  function joinRoom(roomCode, account) {
     const room = getRoom(roomCode);
     const seat = room.players.findIndex((player) => player === null);
     if (room.game || seat === -1) {
       if (room.spectators.size >= MAX_SPECTATORS) {
         throw new RoomError("观战席已满，请稍后再试。", 409, "spectator_full");
       }
-      const spectator = createSpectator(profileInput);
+      const spectator = createSpectator(account);
       room.spectators.set(spectator.token, spectator);
       touch(room);
       broadcast(room);
       return { room, member: spectator };
     }
-    const member = createMember(seat, profileInput);
+    const member = createMember(seat, account);
     room.players[seat] = member;
     touch(room);
     broadcast(room);
@@ -90,24 +92,32 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
     return member;
   }
 
-  function createMember(seat, profileInput) {
-    const profile = normalizeProfile(profileInput, seat);
+  function ensureMemberAccount(member, account) {
+    if (!member || !account || !member.accountId || member.accountId !== account.username) {
+      throw new RoomError("当前账号与房间身份不一致。", 403, "room_account_mismatch");
+    }
+  }
+
+  function createMember(seat, account) {
+    const profile = normalizeProfile(account && account.profile, seat);
     return {
       role: "player",
       seat,
       token: randomBytes(24).toString("hex"),
+      accountId: String(account && account.username || ""),
       name: profile.name,
       avatar: profile.avatar,
       joinedAt: Date.now()
     };
   }
 
-  function createSpectator(profileInput) {
-    const profile = normalizeProfile(profileInput, 0);
+  function createSpectator(account) {
+    const profile = normalizeProfile(account && account.profile, 0);
     return {
       role: "spectator",
       seat: null,
       token: randomBytes(24).toString("hex"),
+      accountId: String(account && account.username || ""),
       name: profile.name,
       avatar: profile.avatar,
       joinedAt: Date.now()
@@ -122,6 +132,15 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
       }
     }
     throw new RoomError("暂时无法分配房间号，请稍后重试。", 503, "room_code_unavailable");
+  }
+
+  function lockRoomProfiles(room) {
+    if (!accountService) {
+      return;
+    }
+    for (const player of room.players) {
+      accountService.lockProfileFromRoom(player.accountId, room.code);
+    }
   }
 
   function removeExpiredRooms() {
@@ -169,11 +188,14 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
     if (room.game) {
       throw new RoomError("牌局已经开始。", 409, "game_started");
     }
+    lockRoomProfiles(room);
     room.game = poker.createGame({
       targetScore: room.targetScore,
       playerNames: room.players.map((player) => player.name)
     });
+    startReplayRound(room);
     resetFourCardWarnings(room);
+    storeCompletedReplayRound(room);
     clearDismissalVote(room);
     touch(room);
     broadcast(room);
@@ -193,11 +215,15 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
     broadcast(room);
   }
 
-  function updateProfile(room, member, profileInput) {
+  function updateProfile(room, member, profileInput, account) {
+    ensureMemberAccount(member, account);
     if (room.game) {
       throw new RoomError("牌局开始后不能更改昵称或头像。", 409, "profile_locked");
     }
     const profile = normalizeProfile(profileInput, member.seat);
+    if (accountService) {
+      accountService.updateProfile(member.accountId, profile);
+    }
     member.name = profile.name;
     member.avatar = profile.avatar;
     if (member.role === "player" && room.game) {
@@ -273,7 +299,8 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
     }
   }
 
-  function runAction(room, member, body) {
+  function runAction(room, member, body, account) {
+    ensureMemberAccount(member, account);
     if (member.role !== "player") {
       throw new RoomError("观战中不能操作牌局。", 403, "spectator_readonly");
     }
@@ -306,22 +333,28 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
     } else if (action === "hint") {
       selectHint(room.game, member.seat);
     } else if (action === "play") {
+      const discardCount = room.game.discardPile.length;
       const cardsBeforePlay = room.game.players[member.seat].hand.length;
       poker.playSelected(room.game);
       recordFourCardWarning(room, member.seat, cardsBeforePlay);
+      captureReplayDiscards(room, discardCount);
     } else if (action === "pass") {
+      const discardCount = room.game.discardPile.length;
       poker.passTurn(room.game);
+      captureReplayDiscards(room, discardCount);
     } else {
       throw new RoomError("不支持这个牌桌操作。", 400, "unknown_action");
     }
     if (action === "play" || action === "pass") {
-      autoPassUnplayablePlayers(room.game);
+      autoPassUnplayablePlayers(room);
     }
+    storeCompletedReplayRound(room);
     touch(room);
     broadcast(room);
   }
 
-  function autoPassUnplayablePlayers(game) {
+  function autoPassUnplayablePlayers(room) {
+    const game = room.game;
     let guard = 0;
     while (game.phase === "playing" && game.trick && game.trick.lastPlay && guard < game.players.length) {
       const player = game.players[game.currentPlayer];
@@ -329,9 +362,132 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
       if (moves.length > 0) {
         break;
       }
+      const discardCount = game.discardPile.length;
       poker.passTurn(game);
+      captureReplayDiscards(room, discardCount);
       guard += 1;
     }
+  }
+
+  function startReplayRound(room) {
+    const game = room && room.game;
+    if (!game) {
+      return;
+    }
+    const roundNumber = Number(room.replayRoundNumber || 0) + 1;
+    room.replayRoundNumber = roundNumber;
+    room.replayRound = {
+      id: randomBytes(18).toString("hex"),
+      roomCode: room.code,
+      roundNumber,
+      targetScore: game.targetScore,
+      startedAt: Date.now(),
+      completedAt: null,
+      recordStored: false,
+      winnerId: null,
+      players: room.players.map((player) => ({
+        seat: player.seat,
+        accountId: player.accountId,
+        name: player.name,
+        avatar: replayAvatar(player.avatar)
+      })),
+      initialHands: game.players.map((player) => player.hand.map(copyReplayCard)),
+      events: [],
+      scores: [],
+      roundResult: [],
+      finalSettlement: null
+    };
+    finishReplayRound(room);
+  }
+
+  function captureReplayDiscards(room, previousDiscardCount) {
+    const game = room && room.game;
+    const replayRound = room && room.replayRound;
+    if (!game || !replayRound || !Array.isArray(game.discardPile)) {
+      return;
+    }
+    const start = Math.max(0, Number(previousDiscardCount) || 0);
+    for (let index = start; index < game.discardPile.length; index += 1) {
+      const discard = game.discardPile[index];
+      if (!discard) {
+        continue;
+      }
+      const isPass = !discard.cards || discard.cards.length === 0;
+      replayRound.events.push({
+        step: replayRound.events.length + 1,
+        playerId: discard.playerId,
+        playerName: discard.playerName,
+        kind: isPass ? "pass" : "play",
+        label: isPass ? "要不起" : discard.label,
+        cards: (discard.cards || []).map(copyReplayCard),
+        currentPlayer: game.currentPlayer,
+        turnCount: game.turnCount,
+        occurredAt: Date.now()
+      });
+    }
+    finishReplayRound(room);
+  }
+
+  function finishReplayRound(room) {
+    const game = room && room.game;
+    const replayRound = room && room.replayRound;
+    if (!game || !replayRound || replayRound.completedAt || game.phase === "playing") {
+      return;
+    }
+    replayRound.completedAt = Date.now();
+    replayRound.winnerId = game.winnerId;
+    replayRound.scores = game.players.map((player) => ({ playerId: player.id, score: player.score || 0 }));
+    replayRound.roundResult = cloneReplayValue(game.roundResult || []);
+    replayRound.finalSettlement = cloneReplayValue(game.finalSettlement || null);
+  }
+
+  function storeCompletedReplayRound(room) {
+    const replayRound = room && room.replayRound;
+    if (!accountService || !room || !replayRound || replayRound.recordStored || !replayRound.completedAt) {
+      return;
+    }
+    const record = buildReplayRecord(room, replayRound);
+    for (const player of room.players.filter(Boolean)) {
+      accountService.recordRound(player.accountId, record);
+    }
+    replayRound.recordStored = true;
+  }
+
+  function buildReplayRecord(room, replayRound) {
+    return {
+      id: replayRound.id,
+      roomCode: room.code,
+      roundNumber: replayRound.roundNumber,
+      targetScore: replayRound.targetScore,
+      startedAt: replayRound.startedAt,
+      completedAt: replayRound.completedAt,
+      winnerId: replayRound.winnerId,
+      players: cloneReplayValue(replayRound.players),
+      initialHands: cloneReplayValue(replayRound.initialHands),
+      events: cloneReplayValue(replayRound.events),
+      scores: cloneReplayValue(replayRound.scores),
+      roundResult: cloneReplayValue(replayRound.roundResult),
+      finalSettlement: cloneReplayValue(replayRound.finalSettlement)
+    };
+  }
+
+  function copyReplayCard(card) {
+    return {
+      id: card.id,
+      suit: card.suit,
+      rank: card.rank,
+      color: card.color,
+      rankValue: card.rankValue,
+      suitValue: card.suitValue
+    };
+  }
+
+  function replayAvatar(avatar) {
+    return typeof avatar === "string" && avatar.startsWith("data:image/") ? "😀" : avatar;
+  }
+
+  function cloneReplayValue(value) {
+    return JSON.parse(JSON.stringify(value));
   }
 
   function selectHint(game, playerId) {
@@ -358,7 +514,9 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
         playerNames: room.players.map((player) => player.name)
       })
       : poker.createNextRound(room.game);
+    startReplayRound(room);
     resetFourCardWarnings(room);
+    storeCompletedReplayRound(room);
     touch(room);
     broadcast(room);
   }
@@ -616,8 +774,11 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
 
   function formatTableActions(game) {
     const currentActions = game.trick && Array.isArray(game.trick.actions) ? game.trick.actions : [];
-    const visibleActions = currentActions.length > 0 ? currentActions : game.previousTrickActions || [];
-    return visibleActions.map((action) => ({
+    const latestByPlayer = new Map();
+    for (const action of currentActions) {
+      latestByPlayer.set(action.playerId, action);
+    }
+    return Array.from(latestByPlayer.values()).map((action) => ({
       playerId: action.playerId,
       playerName: action.playerName,
       kind: action.kind,
@@ -714,8 +875,8 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
       if (req.method !== "POST") {
         return transport.sendJson(res, { error: "method_not_allowed" }, 405);
       }
-      const body = await transport.readJson(req);
-      const { room, member } = createRoom(body.profile);
+      const authenticated = accountService.authenticateRequest(req);
+      const { room, member } = createRoom(authenticated.account);
       return transport.sendJson(res, {
         session: sessionFor(room, member),
         state: viewRoom(room, member)
@@ -727,8 +888,8 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
       if (req.method !== "POST") {
         return transport.sendJson(res, { error: "method_not_allowed" }, 405);
       }
-      const body = await transport.readJson(req);
-      const { room, member } = joinRoom(roomCode, body.profile);
+      const authenticated = accountService.authenticateRequest(req);
+      const { room, member } = joinRoom(roomCode, authenticated.account);
       return transport.sendJson(res, {
         session: sessionFor(room, member),
         state: viewRoom(room, member)
@@ -773,15 +934,17 @@ export function createRoomService({ poker, rules, dismissalVoteMs = DISMISSAL_VO
     if (body.token !== token) {
       throw new RoomError("房间身份校验失败。", 403, "invalid_session");
     }
+    const authenticated = accountService.authenticateRequest(req);
+    ensureMemberAccount(member, authenticated.account);
 
     if (actionName === "start") {
       startRoom(room, member);
     } else if (actionName === "target") {
       setTarget(room, member, body.score);
     } else if (actionName === "profile") {
-      updateProfile(room, member, body.profile);
+      updateProfile(room, member, body.profile, authenticated.account);
     } else if (actionName === "action") {
-      runAction(room, member, body);
+      runAction(room, member, body, authenticated.account);
     } else if (actionName === "leave") {
       leaveRoom(room, member);
       return transport.sendJson(res, { left: true });

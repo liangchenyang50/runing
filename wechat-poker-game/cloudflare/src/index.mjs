@@ -1,6 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import * as poker from "./poker_core.mjs";
 import * as rules from "./rules.mjs";
+import { AccountError, normalizeUsername } from "./account.mjs";
+
+export { NicknameClaim, PlayerAccount } from "./account.mjs";
 const TARGET_OPTIONS = [100, 200, 500];
 const DEFAULT_AVATARS = ["😀", "😺", "🐼", "🦊", "🐸", "🐯", "🐰", "🦁", "🐻", "🐨", "🐵", "🐧"];
 const ROOM_CODE_RE = /^\d{6}$/;
@@ -37,6 +40,9 @@ export default {
           }
         );
       }
+      if (url.pathname.startsWith("/api/auth") || url.pathname.startsWith("/api/account")) {
+        return await handleAccountRequest(request, env, url);
+      }
       if (url.pathname.startsWith("/api/rooms")) {
         return await handleRoomRequest(request, env, url);
       }
@@ -46,7 +52,8 @@ export default {
       return env.ASSETS.fetch(request);
     } catch (error) {
       console.error(JSON.stringify({ level: "error", event: "worker_request_failed", message: errorMessage(error) }));
-      return json({ error: "server_error", message: "服务暂时不可用，请稍后重试。" }, 500);
+      const details = errorDetails(error);
+      return json({ error: details.code, message: details.message }, details.status);
     }
   }
 };
@@ -54,18 +61,19 @@ export default {
 export class PokerRoom extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
+    this.env = env;
     this.room = null;
     this.ready = this.ctx.blockConcurrencyWhile(async () => {
       this.room = await this.ctx.storage.get("room") || null;
     });
   }
 
-  async initialize(code, profileInput) {
+  async initialize(code, account) {
     return this.asResult(async () => {
       if (this.room) {
         throw new RoomError("房间号已被占用。", 409, "room_exists");
       }
-      const member = createMember(0, profileInput);
+      const member = createMember(0, account);
       const now = Date.now();
       this.room = {
         code,
@@ -78,6 +86,8 @@ export class PokerRoom extends DurableObject {
         fourCardWarnedSeats: [],
         dismissalVote: null,
         dismissalNotice: null,
+        replayRound: null,
+        replayRoundNumber: 0,
         createdAt: now,
         updatedAt: now
       };
@@ -89,7 +99,7 @@ export class PokerRoom extends DurableObject {
     });
   }
 
-  async join(profileInput) {
+  async join(account) {
     return this.asResult(async () => {
       const room = await this.requireActiveRoom();
       const seat = room.players.findIndex((player) => player === null);
@@ -98,7 +108,7 @@ export class PokerRoom extends DurableObject {
         if (room.spectators.length >= MAX_SPECTATORS) {
           throw new RoomError("观战席已满，请稍后再试。", 409, "spectator_full");
         }
-        const spectator = createSpectator(profileInput);
+        const spectator = createSpectator(account);
         room.spectators.push(spectator);
         await this.commit();
         this.broadcast();
@@ -107,7 +117,7 @@ export class PokerRoom extends DurableObject {
           state: this.viewRoom(spectator)
         };
       }
-      const member = createMember(seat, profileInput);
+      const member = createMember(seat, account);
       room.players[seat] = member;
       await this.commit();
       this.broadcast();
@@ -126,10 +136,11 @@ export class PokerRoom extends DurableObject {
     });
   }
 
-  async start(token) {
+  async start(token, account) {
     return this.asResult(async () => {
       const room = await this.requireActiveRoom();
       const member = getMember(room, token);
+      ensureMemberAccount(member, account);
       ensureHost(member);
       if (!room.players.every(Boolean)) {
         throw new RoomError("需要四名玩家全部入座后才能开始。", 409, "players_needed");
@@ -137,21 +148,25 @@ export class PokerRoom extends DurableObject {
       if (room.game) {
         throw new RoomError("牌局已经开始。", 409, "game_started");
       }
+      await this.lockRoomProfiles(room);
       room.game = poker.createGame({
         targetScore: room.targetScore,
         playerNames: room.players.map((player) => player.name)
       });
+      startReplayRound(room);
       resetFourCardWarnings(room);
       await this.commit();
+      await this.storeCompletedReplayRound();
       this.broadcast();
       return this.viewRoom(member);
     });
   }
 
-  async setTarget(token, score) {
+  async setTarget(token, score, account) {
     return this.asResult(async () => {
       const room = await this.requireActiveRoom();
       const member = getMember(room, token);
+      ensureMemberAccount(member, account);
       ensureHost(member);
       if (room.game) {
         throw new RoomError("牌局开始后不能修改目标分。", 409, "target_locked");
@@ -167,29 +182,34 @@ export class PokerRoom extends DurableObject {
     });
   }
 
-  async updateProfile(token, profileInput) {
+  async updateProfile(token, profileInput, account) {
     return this.asResult(async () => {
       const room = await this.requireActiveRoom();
       const member = getMember(room, token);
+      ensureMemberAccount(member, account);
       if (room.game) {
         throw new RoomError("牌局开始后不能更改昵称或头像。", 409, "profile_locked");
       }
       const profile = normalizeProfile(profileInput, member.seat);
+      const result = await this.env.PLAYER_ACCOUNT
+        .getByName(`account:${member.accountId}`)
+        .updateProfileFromRoom(profile);
+      if (!result.ok) {
+        throw new RoomError(result.error.message || "账号资料同步失败。", result.error.status || 500, result.error.code || "account_sync_failed");
+      }
       member.name = profile.name;
       member.avatar = profile.avatar;
-      if (member.role !== "spectator" && room.game) {
-        renameGamePlayer(room.game, member.seat, member.name);
-      }
       await this.commit();
       this.broadcast();
       return this.viewRoom(member);
     });
   }
 
-  async action(token, body) {
+  async action(token, body, account) {
     return this.asResult(async () => {
       const room = await this.requireActiveRoom();
       const member = getMember(room, token);
+      ensureMemberAccount(member, account);
       if (member.role === "spectator") {
         throw new RoomError("观战中不能操作牌局。", 403, "spectator_readonly");
       }
@@ -207,15 +227,17 @@ export class PokerRoom extends DurableObject {
         runGameAction(room, member, body);
       }
       await this.commit();
+      await this.storeCompletedReplayRound();
       this.broadcast();
       return this.viewRoom(member);
     });
   }
 
-  async leave(token) {
+  async leave(token, account) {
     return this.asResult(async () => {
       const room = await this.requireActiveRoom();
       const member = getMember(room, token);
+      ensureMemberAccount(member, account);
       if (member.role === "spectator") {
         room.spectators = (room.spectators || []).filter((spectator) => spectator.token !== member.token);
         await this.commit();
@@ -353,6 +375,43 @@ export class PokerRoom extends DurableObject {
     await this.scheduleAlarm();
   }
 
+  async storeCompletedReplayRound() {
+    const room = this.room;
+    const replayRound = room && room.replayRound;
+    if (!room || !replayRound || replayRound.recordStored || !replayRound.completedAt) {
+      return;
+    }
+    const record = buildReplayRecord(room, replayRound);
+    const results = await Promise.all(room.players
+      .filter(Boolean)
+      .map(async (player) => this.env.PLAYER_ACCOUNT
+        .getByName(`account:${player.accountId}`)
+        .recordRound(record)));
+    const failed = results.find((result) => !result.ok);
+    if (failed) {
+      throw new RoomError(failed.error.message || "战绩保存失败。", failed.error.status || 500, failed.error.code || "record_failed");
+    }
+    replayRound.recordStored = true;
+    await this.persist();
+  }
+
+  async lockRoomProfiles(room) {
+    const results = await Promise.all(room.players.map(async (player) => {
+      const result = await this.env.PLAYER_ACCOUNT
+        .getByName(`account:${player.accountId}`)
+        .lockProfileFromRoom(room.code);
+      return result;
+    }));
+    const failed = results.find((result) => !result || !result.ok);
+    if (failed) {
+      throw new RoomError(
+        failed && failed.error && failed.error.message || "无法锁定玩家资料，请稍后重试。",
+        failed && failed.error && failed.error.status || 409,
+        failed && failed.error && failed.error.code || "profile_locked"
+      );
+    }
+  }
+
   async scheduleAlarm() {
     if (!this.room) {
       return;
@@ -467,16 +526,96 @@ export class PokerRoom extends DurableObject {
   }
 }
 
+async function handleAccountRequest(request, env, url) {
+  const { pathname } = url;
+  if (pathname === "/api/auth/register") {
+    if (request.method !== "POST") {
+      return methodNotAllowed();
+    }
+    const body = await readJson(request);
+    const username = normalizeUsername(body.username);
+    const account = env.PLAYER_ACCOUNT.getByName(`account:${username}`);
+    return rpcResponse(await account.register({ username, password: body.password }), 201);
+  }
+
+  if (pathname === "/api/auth/login") {
+    if (request.method !== "POST") {
+      return methodNotAllowed();
+    }
+    const body = await readJson(request);
+    const username = normalizeUsername(body.username);
+    const account = env.PLAYER_ACCOUNT.getByName(`account:${username}`);
+    return rpcResponse(await account.login({ username, password: body.password }));
+  }
+
+  const authenticated = await requireAuthenticatedAccount(request, env);
+  const account = env.PLAYER_ACCOUNT.getByName(`account:${authenticated.auth.username}`);
+
+  if (pathname === "/api/auth/me") {
+    if (request.method !== "GET") {
+      return methodNotAllowed();
+    }
+    return json({ account: authenticated.account });
+  }
+
+  if (pathname === "/api/auth/logout") {
+    if (request.method !== "POST") {
+      return methodNotAllowed();
+    }
+    return rpcResponse(await account.logout(authenticated.auth.token));
+  }
+
+  if (pathname === "/api/account/profile") {
+    if (request.method !== "POST") {
+      return methodNotAllowed();
+    }
+    const body = await readJson(request);
+    return rpcResponse(await account.updateProfile(authenticated.auth.token, body.profile));
+  }
+
+  if (pathname === "/api/account/history") {
+    if (request.method !== "GET") {
+      return methodNotAllowed();
+    }
+    return rpcResponse(await account.getHistory(authenticated.auth.token));
+  }
+
+  const replayMatch = pathname.match(/^\/api\/account\/history\/([a-zA-Z0-9_-]+)$/);
+  if (replayMatch) {
+    if (request.method !== "GET") {
+      return methodNotAllowed();
+    }
+    return rpcResponse(await account.getReplay(authenticated.auth.token, replayMatch[1]));
+  }
+
+  return json({ error: "not_found", message: "接口不存在。" }, 404);
+}
+
+async function requireAuthenticatedAccount(request, env) {
+  const authorization = String(request.headers.get("authorization") || "");
+  const match = authorization.match(/^Bearer\s+([^:\s]+):([^\s]+)$/i);
+  if (!match) {
+    throw new RoomError("请先登录账号。", 401, "auth_required");
+  }
+  const username = normalizeUsername(match[1]);
+  const account = env.PLAYER_ACCOUNT.getByName(`account:${username}`);
+  const result = await account.authenticate(match[2]);
+  if (!result.ok) {
+    throw new RoomError(result.error.message || "登录已失效，请重新登录。", result.error.status || 401, result.error.code || "auth_required");
+  }
+  return result.data;
+}
+
 async function handleRoomRequest(request, env, url) {
   if (url.pathname === "/api/rooms") {
     if (request.method !== "POST") {
       return methodNotAllowed();
     }
-    const body = await readJson(request);
+    const account = await requireAuthenticatedAccount(request, env);
     for (let attempt = 0; attempt < 30; attempt += 1) {
       const roomCode = createRoomCode();
       const stub = env.POKER_ROOM.getByName(`room:${roomCode}`);
-      const result = await stub.initialize(roomCode, body.profile);
+      const result = await stub.initialize(roomCode, account.account);
       if (result.ok || result.error.code !== "room_exists") {
         return rpcResponse(result, 201);
       }
@@ -500,7 +639,8 @@ async function handleRoomRequest(request, env, url) {
     if (request.method !== "POST") {
       return methodNotAllowed();
     }
-    return rpcResponse(await stub.join((await readJson(request)).profile), 201);
+    const account = await requireAuthenticatedAccount(request, env);
+    return rpcResponse(await stub.join(account.account), 201);
   }
   if (!actionName || actionName === "state") {
     if (request.method !== "GET") {
@@ -517,19 +657,24 @@ async function handleRoomRequest(request, env, url) {
     return json({ error: "invalid_session", message: "房间身份校验失败。" }, 403);
   }
   if (actionName === "start") {
-    return rpcResponse(await stub.start(token));
+    const account = await requireAuthenticatedAccount(request, env);
+    return rpcResponse(await stub.start(token, account.account));
   }
   if (actionName === "target") {
-    return rpcResponse(await stub.setTarget(token, body.score));
+    const account = await requireAuthenticatedAccount(request, env);
+    return rpcResponse(await stub.setTarget(token, body.score, account.account));
   }
   if (actionName === "action") {
-    return rpcResponse(await stub.action(token, body));
+    const account = await requireAuthenticatedAccount(request, env);
+    return rpcResponse(await stub.action(token, body, account.account));
   }
   if (actionName === "profile") {
-    return rpcResponse(await stub.updateProfile(token, body.profile));
+    const account = await requireAuthenticatedAccount(request, env);
+    return rpcResponse(await stub.updateProfile(token, body.profile, account.account));
   }
   if (actionName === "leave") {
-    return rpcResponse(await stub.leave(token));
+    const account = await requireAuthenticatedAccount(request, env);
+    return rpcResponse(await stub.leave(token, account.account));
   }
   return json({ error: "not_found", message: "接口不存在。" }, 404);
 }
@@ -550,16 +695,20 @@ function runGameAction(room, member, body) {
   } else if (action === "hint") {
     selectHint(room.game, member.seat);
   } else if (action === "play") {
+    const discardCount = room.game.discardPile.length;
     const cardsBeforePlay = room.game.players[member.seat].hand.length;
     poker.playSelected(room.game);
     recordFourCardWarning(room, member.seat, cardsBeforePlay);
+    captureReplayDiscards(room, discardCount);
   } else if (action === "pass") {
+    const discardCount = room.game.discardPile.length;
     poker.passTurn(room.game);
+    captureReplayDiscards(room, discardCount);
   } else {
     throw new RoomError("不支持这个牌桌操作。", 400, "unknown_action");
   }
   if (action === "play" || action === "pass") {
-    autoPassUnplayablePlayers(room.game);
+    autoPassUnplayablePlayers(room);
   }
 }
 
@@ -573,10 +722,12 @@ function advanceRound(room) {
       playerNames: room.players.map((player) => player.name)
     })
     : poker.createNextRound(room.game);
+  startReplayRound(room);
   resetFourCardWarnings(room);
 }
 
-function autoPassUnplayablePlayers(game) {
+function autoPassUnplayablePlayers(room) {
+  const game = room.game;
   let guard = 0;
   while (game.phase === "playing" && game.trick && game.trick.lastPlay && guard < game.players.length) {
     const player = game.players[game.currentPlayer];
@@ -584,9 +735,120 @@ function autoPassUnplayablePlayers(game) {
     if (moves.length > 0) {
       break;
     }
+    const discardCount = game.discardPile.length;
     poker.passTurn(game);
+    captureReplayDiscards(room, discardCount);
     guard += 1;
   }
+}
+
+function startReplayRound(room) {
+  const game = room && room.game;
+  if (!game) {
+    return;
+  }
+  const roundNumber = Number(room.replayRoundNumber || 0) + 1;
+  room.replayRoundNumber = roundNumber;
+  room.replayRound = {
+    id: createToken(),
+    roomCode: room.code,
+    roundNumber,
+    targetScore: game.targetScore,
+    startedAt: Date.now(),
+    completedAt: null,
+    recordStored: false,
+    winnerId: null,
+    players: room.players.map((player) => ({
+      seat: player.seat,
+      accountId: player.accountId,
+      name: player.name,
+      avatar: replayAvatar(player.avatar)
+    })),
+    initialHands: game.players.map((player) => player.hand.map(copyReplayCard)),
+    events: [],
+    scores: [],
+    roundResult: [],
+    finalSettlement: null
+  };
+  finishReplayRound(room);
+}
+
+function captureReplayDiscards(room, previousDiscardCount) {
+  const game = room && room.game;
+  const replayRound = room && room.replayRound;
+  if (!game || !replayRound || !Array.isArray(game.discardPile)) {
+    return;
+  }
+  const start = Math.max(0, Number(previousDiscardCount) || 0);
+  for (let index = start; index < game.discardPile.length; index += 1) {
+    const discard = game.discardPile[index];
+    if (!discard) {
+      continue;
+    }
+    const isPass = !discard.cards || discard.cards.length === 0;
+    replayRound.events.push({
+      step: replayRound.events.length + 1,
+      playerId: discard.playerId,
+      playerName: discard.playerName,
+      kind: isPass ? "pass" : "play",
+      label: isPass ? "要不起" : discard.label,
+      cards: (discard.cards || []).map(copyReplayCard),
+      currentPlayer: game.currentPlayer,
+      turnCount: game.turnCount,
+      occurredAt: Date.now()
+    });
+  }
+  finishReplayRound(room);
+}
+
+function finishReplayRound(room) {
+  const game = room && room.game;
+  const replayRound = room && room.replayRound;
+  if (!game || !replayRound || replayRound.completedAt || game.phase === "playing") {
+    return;
+  }
+  replayRound.completedAt = Date.now();
+  replayRound.winnerId = game.winnerId;
+  replayRound.scores = game.players.map((player) => ({ playerId: player.id, score: player.score || 0 }));
+  replayRound.roundResult = cloneReplayValue(game.roundResult || []);
+  replayRound.finalSettlement = cloneReplayValue(game.finalSettlement || null);
+}
+
+function buildReplayRecord(room, replayRound) {
+  return {
+    id: replayRound.id,
+    roomCode: room.code,
+    roundNumber: replayRound.roundNumber,
+    targetScore: replayRound.targetScore,
+    startedAt: replayRound.startedAt,
+    completedAt: replayRound.completedAt,
+    winnerId: replayRound.winnerId,
+    players: cloneReplayValue(replayRound.players),
+    initialHands: cloneReplayValue(replayRound.initialHands),
+    events: cloneReplayValue(replayRound.events),
+    scores: cloneReplayValue(replayRound.scores),
+    roundResult: cloneReplayValue(replayRound.roundResult),
+    finalSettlement: cloneReplayValue(replayRound.finalSettlement)
+  };
+}
+
+function copyReplayCard(card) {
+  return {
+    id: card.id,
+    suit: card.suit,
+    rank: card.rank,
+    color: card.color,
+    rankValue: card.rankValue,
+    suitValue: card.suitValue
+  };
+}
+
+function replayAvatar(avatar) {
+  return typeof avatar === "string" && avatar.startsWith("data:image/") ? "😀" : avatar;
+}
+
+function cloneReplayValue(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function selectHint(game, playerId) {
@@ -715,24 +977,26 @@ function presentDismissalVote(room, member) {
   };
 }
 
-function createMember(seat, profileInput) {
-  const profile = normalizeProfile(profileInput, seat);
+function createMember(seat, account) {
+  const profile = normalizeProfile(account && account.profile, seat);
   return {
     role: "player",
     seat,
     token: createToken(),
+    accountId: String(account && account.username || ""),
     name: profile.name,
     avatar: profile.avatar,
     joinedAt: Date.now()
   };
 }
 
-function createSpectator(profileInput) {
-  const profile = normalizeProfile(profileInput, 0);
+function createSpectator(account) {
+  const profile = normalizeProfile(account && account.profile, 0);
   return {
     role: "spectator",
     seat: null,
     token: createToken(),
+    accountId: String(account && account.username || ""),
     name: profile.name,
     avatar: profile.avatar,
     joinedAt: Date.now()
@@ -774,6 +1038,12 @@ function getMember(room, token) {
     throw new RoomError("房间身份已失效，请重新加入。", 403, "invalid_session");
   }
   return member;
+}
+
+function ensureMemberAccount(member, account) {
+  if (!member || !account || !member.accountId || member.accountId !== account.username) {
+    throw new RoomError("当前账号与房间身份不一致。", 403, "room_account_mismatch");
+  }
 }
 
 function memberForSocket(room, socket) {
@@ -844,8 +1114,11 @@ function formatLastPlay(lastPlay) {
 
 function formatTableActions(game) {
   const currentActions = game.trick && Array.isArray(game.trick.actions) ? game.trick.actions : [];
-  const visibleActions = currentActions.length > 0 ? currentActions : game.previousTrickActions || [];
-  return visibleActions.map((action) => ({
+  const latestByPlayer = new Map();
+  for (const action of currentActions) {
+    latestByPlayer.set(action.playerId, action);
+  }
+  return Array.from(latestByPlayer.values()).map((action) => ({
     playerId: action.playerId,
     playerName: action.playerName,
     kind: action.kind,
@@ -944,6 +1217,9 @@ function json(payload, status = 200) {
 
 function errorDetails(error) {
   if (error instanceof RoomError) {
+    return { code: error.code, message: error.message, status: error.status };
+  }
+  if (error instanceof AccountError) {
     return { code: error.code, message: error.message, status: error.status };
   }
   return { code: "room_error", message: errorMessage(error) || "房间服务暂时不可用。", status: 500 };

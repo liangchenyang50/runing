@@ -5,6 +5,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createRoomService, isRoomError } from "./room_service.mjs";
+import { AccountServiceError, createAccountService } from "./account_service.mjs";
 
 const require = createRequire(import.meta.url);
 const poker = require("../js/poker_core.js");
@@ -35,7 +36,8 @@ export function createPreviewApp(options = {}) {
   let state = null;
   let fourCardAlerts = [];
   let fourCardWarnedPlayerIds = new Set();
-  const roomService = createRoomService({ poker, rules, ...options });
+  const accountService = createAccountService();
+  const roomService = createRoomService({ poker, rules, accountService, ...options });
 
   function runAutoPlayers() {
     let guard = 0;
@@ -216,11 +218,12 @@ export function createPreviewApp(options = {}) {
     const currentActions = gameState.trick && Array.isArray(gameState.trick.actions)
       ? gameState.trick.actions
       : [];
-    const visibleActions = currentActions.length > 0
-      ? currentActions
-      : gameState.previousTrickActions || [];
+    const latestByPlayer = new Map();
+    for (const action of currentActions) {
+      latestByPlayer.set(action.playerId, action);
+    }
 
-    return visibleActions.map((action) => ({
+    return Array.from(latestByPlayer.values()).map((action) => ({
       playerId: action.playerId,
       playerName: action.playerName,
       kind: action.kind,
@@ -308,6 +311,10 @@ export function createPreviewApp(options = {}) {
   async function handle(req, res) {
     try {
       const url = new URL(req.url || "/", "http://127.0.0.1");
+      if (url.pathname.startsWith("/api/auth") || url.pathname.startsWith("/api/account")) {
+        await accountService.handle(req, res, url, { readJson, sendJson });
+        return;
+      }
       if (url.pathname.startsWith("/api/rooms")) {
         await roomService.handle(req, res, url, { readJson, sendJson });
         return;
@@ -318,10 +325,10 @@ export function createPreviewApp(options = {}) {
       }
       await serveStatic(url.pathname, res);
     } catch (error) {
-      const status = isRoomError(error)
+      const status = isRoomError(error) || error instanceof AccountServiceError
         ? error.status
         : Number.isInteger(error.status) ? error.status : 500;
-      const code = isRoomError(error) ? error.code : "server_error";
+      const code = isRoomError(error) || error instanceof AccountServiceError ? error.code : "server_error";
       sendJson(res, { error: code, message: error.message || "服务暂时不可用。" }, status);
     }
   }

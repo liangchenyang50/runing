@@ -15,6 +15,14 @@
       {
         "name": "POKER_ROOM",
         "class_name": "PokerRoom"
+      },
+      {
+        "name": "PLAYER_ACCOUNT",
+        "class_name": "PlayerAccount"
+      },
+      {
+        "name": "NICKNAME_CLAIM",
+        "class_name": "NicknameClaim"
       }
     ]
   },
@@ -22,6 +30,14 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["PokerRoom"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["PlayerAccount"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["NicknameClaim"]
     }
   ],
   "observability": {

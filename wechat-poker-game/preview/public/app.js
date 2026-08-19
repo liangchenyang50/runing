@@ -45,6 +45,7 @@ const PHOTO_AVATARS = [
 const AVATARS = [...PHOTO_AVATARS, "😀", "😺", "🐼", "🦊", "🐸", "🐯", "🐰", "🦁", "🐻", "🐨", "🐵", "🐧"];
 const PROFILE_KEY = "four-poker-profile-v1";
 const SESSION_KEY = "four-poker-room-session-v1";
+const AUTH_KEY = "four-poker-account-auth-v1";
 const DEFAULT_PROFILE_NAME = "英雄";
 const LEGACY_DEFAULT_PROFILE_NAME = "玩家";
 const RUNTIME = window.__POKER_RUNTIME__ || {};
@@ -58,6 +59,13 @@ let emojiPickerOpen = false;
 let profileEditorOpen = false;
 let profile = loadProfile();
 let profileDraft = { ...profile };
+let auth = loadAuth();
+let authMode = "login";
+let historyOpen = false;
+let historyLoading = false;
+let historyRecords = [];
+let replayRecord = null;
+let replayStep = 0;
 let session = loadSession();
 let eventSource = null;
 let eventSourceKey = "";
@@ -103,6 +111,18 @@ function loadSession() {
   return null;
 }
 
+function loadAuth() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(AUTH_KEY) || "null");
+    if (stored && typeof stored.username === "string" && typeof stored.token === "string") {
+      return stored;
+    }
+  } catch {
+    // The login screen remains available when browser storage is unavailable.
+  }
+  return null;
+}
+
 function normalizeProfile(source) {
   const rawName = String(source && source.name || "").trim().replace(/\s+/g, " ");
   const name = Array.from(rawName || DEFAULT_PROFILE_NAME).slice(0, 12).join("");
@@ -130,6 +150,29 @@ function saveSession(nextSession) {
   }
 }
 
+function saveAuth(nextAuth) {
+  auth = nextAuth && typeof nextAuth === "object" ? { ...nextAuth } : null;
+  try {
+    if (auth) {
+      localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+    } else {
+      localStorage.removeItem(AUTH_KEY);
+    }
+  } catch {
+    // The active tab can still keep the current login in memory.
+  }
+}
+
+function clearAuth() {
+  saveAuth(null);
+  clearSession();
+  profileEditorOpen = false;
+  historyOpen = false;
+  historyLoading = false;
+  replayRecord = null;
+  replayStep = 0;
+}
+
 function clearSession() {
   session = null;
   resetHandToggleQueue();
@@ -143,9 +186,16 @@ function clearSession() {
 
 async function requestJson(path, body, method) {
   const requestMethod = method || (body == null ? "GET" : "POST");
+  const headers = {};
+  if (body != null) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (auth && auth.username && auth.token) {
+    headers.Authorization = `Bearer ${auth.username}:${auth.token}`;
+  }
   const response = await fetch(path, {
     method: requestMethod,
-    headers: body == null ? undefined : { "Content-Type": "application/json" },
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
     body: body == null ? undefined : JSON.stringify(body)
   });
   const payload = await response.json().catch(() => ({}));
@@ -184,6 +234,13 @@ function escapeHtml(value) {
 
 function render(state) {
   currentState = state || { mode: "home" };
+  const debugSolo = LOCAL_DEBUG && new URL(window.location.href).searchParams.get("debug") === "solo";
+  if (!auth && !debugSolo) {
+    currentState = { mode: "auth" };
+    profileEditorOpen = false;
+    historyOpen = false;
+    replayRecord = null;
+  }
   if (currentState.mode === "room" && currentState.roomClosed) {
     const closeMessage = currentState.roomCloseMessage || "房间已解散。";
     clearSession();
@@ -195,7 +252,9 @@ function render(state) {
   if (currentState.mode === "room" && currentState.active) {
     profileEditorOpen = false;
   }
-  const content = currentState.mode === "room"
+  const content = currentState.mode === "auth"
+    ? renderAuthScreen()
+    : currentState.mode === "room"
     ? currentState.phase === "lobby" ? renderRoomLobby(currentState) : renderGame(currentState)
     : currentState.active ? renderGame(currentState) : isSoloSetup(currentState) ? renderSoloSetup(currentState) : renderHome();
   app.innerHTML = `
@@ -203,7 +262,7 @@ function render(state) {
       <span class="orientation-icon" aria-hidden="true">↻</span>
       <strong>竖屏体验更佳</strong>
     </section>
-    <section class="shell">${content}${profileEditorOpen ? renderProfileEditor() : ""}</section>
+    <section class="shell">${content}${profileEditorOpen ? renderProfileEditor() : ""}${historyOpen ? renderHistoryModal() : ""}</section>
   `;
   bindEvents(currentState);
   syncRoomEvents(currentState);
@@ -214,12 +273,54 @@ function isSoloSetup(state) {
   return Boolean(state && Object.prototype.hasOwnProperty.call(state, "selectedTargetScore"));
 }
 
+function renderAuthScreen() {
+  const registering = authMode === "register";
+  return `
+    <section class="setup-screen auth-screen">
+      <header class="game-header setup-header">
+        <div class="round-sign"><strong>四人扑克</strong><span>跑得快</span></div>
+      </header>
+      <div class="setup-deck" aria-hidden="true">
+        <span class="setup-card setup-card-one">A</span>
+        <span class="setup-card setup-card-two">K</span>
+        <span class="setup-card setup-card-three">2</span>
+      </div>
+      <section class="auth-panel" aria-label="账号登录">
+        <div class="auth-switch" role="tablist" aria-label="账号操作">
+          <button class="${registering ? "" : "selected"}" data-action="auth-login" role="tab" aria-selected="${registering ? "false" : "true"}">登录</button>
+          <button class="${registering ? "selected" : ""}" data-action="auth-register" role="tab" aria-selected="${registering ? "true" : "false"}">注册</button>
+        </div>
+        <h1>${registering ? "注册账号" : "登录牌桌"}</h1>
+        <label class="field-label" for="auth-username">账号</label>
+        <input id="auth-username" maxlength="24" autocomplete="username" autocapitalize="none" placeholder="4-24 位字母、数字或 ._-">
+        <label class="field-label" for="auth-password">密码</label>
+        <input id="auth-password" type="password" minlength="8" maxlength="64" autocomplete="${registering ? "new-password" : "current-password"}" placeholder="至少 8 位，含字母和数字">
+        ${registering ? `
+          <label class="field-label" for="auth-password-confirm">确认密码</label>
+          <input id="auth-password-confirm" type="password" minlength="8" maxlength="64" autocomplete="new-password" placeholder="再次输入密码">
+        ` : ""}
+        <button class="game-button game-button-play auth-submit" data-action="auth-submit">${registering ? "注册并设置资料" : "登录"}</button>
+      </section>
+      ${renderClientNotice()}
+    </section>
+  `;
+}
+
+function renderAccountTools() {
+  return `
+    <div class="header-account-tools">
+      <button class="history-control" data-action="open-history" title="战绩查询" aria-label="战绩查询">战绩</button>
+      <button class="header-profile" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(profile.avatar, "header-avatar", profile.name)}<span>${escapeHtml(profile.name)}</span></button>
+    </div>
+  `;
+}
+
 function renderSoloSetup(state) {
   return `
     <section class="setup-screen home-screen">
       <header class="game-header setup-header">
         <div class="round-sign"><strong>四人扑克</strong><span>本地网页试玩版</span></div>
-        <button class="header-profile" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(profile.avatar, "header-avatar", profile.name)}<span>${escapeHtml(profile.name)}</span></button>
+        ${renderAccountTools()}
       </header>
       <div class="setup-deck" aria-hidden="true">
         <span class="setup-card setup-card-one">A</span>
@@ -250,7 +351,7 @@ function renderHome() {
     <section class="setup-screen home-screen">
       <header class="game-header setup-header">
         <div class="round-sign"><strong>四人扑克</strong><span>跑得快</span></div>
-        <button class="header-profile" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(profile.avatar, "header-avatar", profile.name)}<span>${escapeHtml(profile.name)}</span></button>
+        ${renderAccountTools()}
       </header>
       <div class="setup-deck" aria-hidden="true">
         <span class="setup-card setup-card-one">A</span>
@@ -281,7 +382,7 @@ function renderRoomLobby(state) {
     <section class="setup-screen room-lobby-screen">
       <header class="game-header setup-header">
         <div class="round-sign"><strong>房间 ${escapeHtml(state.roomCode)}</strong><span>${state.isSpectator ? "观战中" : "等待入座"}</span></div>
-        <button class="header-profile" data-action="open-profile" title="编辑昵称和头像">${renderAvatar(profile.avatar, "header-avatar", profile.name)}<span>${escapeHtml(profile.name)}</span></button>
+        ${renderAccountTools()}
       </header>
       <section class="room-lobby-content">
         <div class="room-code-banner">
@@ -351,12 +452,19 @@ function renderGame(state) {
         <div class="table-title">四人扑克 ${roomLabel}</div>
         ${state.mode === "room"
           ? state.isSpectator
-            ? '<button class="restart-control spectator-leave-control" data-action="leave-room" title="退出观战" aria-label="退出观战">×</button>'
+            ? `<div class="room-header-controls">
+                ${auth ? '<button class="history-control history-control-compact" data-action="open-history" title="战绩查询" aria-label="战绩查询">战绩</button>' : ""}
+                <button class="restart-control spectator-leave-control" data-action="leave-room" title="退出观战" aria-label="退出观战">×</button>
+              </div>`
             : `<div class="room-header-controls">
+                ${auth ? '<button class="history-control history-control-compact" data-action="open-history" title="战绩查询" aria-label="战绩查询">战绩</button>' : ""}
                 ${state.active ? `<button class="dismiss-control" data-action="request-dismissal" ${state.dismissalVote ? "disabled" : ""}>解散</button>` : ""}
                 <button class="restart-control room-info-control" data-action="copy-room" title="复制房间号" aria-label="复制房间号">#</button>
               </div>`
-          : `<button class="restart-control" data-action="reset" title="${escapeHtml(state.resetLabel)}" aria-label="${escapeHtml(state.resetLabel)}">↻</button>`}
+          : `<div class="room-header-controls">
+              ${auth ? '<button class="history-control history-control-compact" data-action="open-history" title="战绩查询" aria-label="战绩查询">战绩</button>' : ""}
+              <button class="restart-control" data-action="reset" title="${escapeHtml(state.resetLabel)}" aria-label="${escapeHtml(state.resetLabel)}">↻</button>
+            </div>`}
       </header>
 
       ${renderSeat(seats.left, "left", state)}
@@ -700,9 +808,126 @@ function renderProfileEditor() {
         <label class="upload-avatar-button" for="profile-avatar-file">上传图片头像</label>
         <input id="profile-avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
         <button type="button" class="profile-save" data-action="save-profile">保存资料</button>
+        <button type="button" class="profile-logout" data-action="logout">退出登录</button>
       </form>
     </section>
   `;
+}
+
+function renderHistoryModal() {
+  return `
+    <section class="history-modal" role="dialog" aria-modal="true" aria-label="战绩查询">
+      <section class="history-panel">
+        <header>
+          <h2>${replayRecord ? "对局复盘" : "战绩查询"}</h2>
+          <button class="modal-close" data-action="close-history" title="关闭" aria-label="关闭">×</button>
+        </header>
+        ${replayRecord ? renderReplayViewer(replayRecord) : renderHistoryList()}
+      </section>
+    </section>
+  `;
+}
+
+function renderHistoryList() {
+  if (historyLoading) {
+    return '<p class="history-empty">正在读取战绩…</p>';
+  }
+  if (historyRecords.length === 0) {
+    return '<p class="history-empty">还没有已完成的对局。</p>';
+  }
+  return `
+    <div class="history-list">
+      ${historyRecords.map((record) => `
+        <button class="history-record" data-action="open-replay" data-record-id="${escapeHtml(record.id)}">
+          <span class="history-record-main">
+            <strong>${escapeHtml(formatHistoryDate(record.completedAt))} · 第 ${escapeHtml(record.roundNumber)} 局</strong>
+            <small>${escapeHtml((record.playerNames || []).join(" · "))}</small>
+          </span>
+          <span class="history-record-result ${record.isWinner ? "winner" : ""}">${record.isWinner ? "胜出" : `胜者 ${escapeHtml(record.winnerName)}`}</span>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderReplayViewer(record) {
+  const frame = buildReplayFrame(record, replayStep);
+  const total = frame.events.length;
+  const activeEvent = frame.lastEvent;
+  const positions = [
+    { seat: 2, position: "top" },
+    { seat: 1, position: "left" },
+    { seat: 3, position: "right" },
+    { seat: 0, position: "bottom" }
+  ];
+  return `
+    <div class="replay-meta">房间 ${escapeHtml(record.roomCode)} · 第 ${escapeHtml(record.roundNumber)} 局 · ${escapeHtml(record.targetScore)} 分</div>
+    <section class="replay-board" aria-label="全明牌复盘">
+      ${positions.map(({ seat, position }) => renderReplaySeat(frame, seat, position)).join("")}
+      <section class="replay-center">
+        ${activeEvent
+          ? activeEvent.kind === "pass"
+            ? `<strong>${escapeHtml(activeEvent.playerName)}</strong><div class="pass-stamp">要不起</div>`
+            : `<strong>${escapeHtml(activeEvent.playerName)} 出牌</strong><div class="replay-played-hand">${(activeEvent.cards || []).map(renderReplayCard).join("")}</div>`
+          : '<strong>开局</strong><span>全部手牌已公开</span>'}
+      </section>
+    </section>
+    <div class="replay-progress-row">
+      <span>${replayStep} / ${total}</span>
+      <input id="replay-progress" type="range" min="0" max="${total}" value="${replayStep}" aria-label="复盘进度">
+    </div>
+    <div class="replay-controls">
+      <button class="replay-icon-button" data-action="replay-prev" ${replayStep <= 0 ? "disabled" : ""} aria-label="上一步" title="上一步">←</button>
+      <button class="replay-back-button" data-action="history-list">战绩列表</button>
+      <button class="replay-icon-button" data-action="replay-next" ${replayStep >= total ? "disabled" : ""} aria-label="下一步" title="下一步">→</button>
+    </div>
+  `;
+}
+
+function buildReplayFrame(record, requestedStep) {
+  const players = Array.isArray(record.players) ? record.players : [];
+  const hands = (record.initialHands || []).map((hand) => (hand || []).map((card) => ({ ...card })));
+  const events = Array.isArray(record.events) ? record.events : [];
+  const step = Math.min(Math.max(0, Number(requestedStep) || 0), events.length);
+  let lastEvent = null;
+  for (let index = 0; index < step; index += 1) {
+    const event = events[index];
+    if (!event) {
+      continue;
+    }
+    lastEvent = event;
+    if (event.kind !== "play") {
+      continue;
+    }
+    const hand = hands[event.playerId] || [];
+    const ids = new Set((event.cards || []).map((card) => card.id));
+    hands[event.playerId] = hand.filter((card) => !ids.has(card.id));
+  }
+  return { players, hands, events, lastEvent };
+}
+
+function renderReplaySeat(frame, seat, position) {
+  const player = frame.players.find((item) => item.seat === seat) || { name: "玩家", avatar: "😀", seat };
+  const hand = frame.hands[seat] || [];
+  return `
+    <section class="replay-seat replay-seat-${position}">
+      <div class="replay-seat-title">${renderAvatar(player.avatar, "replay-avatar", player.name)}<span><strong>${escapeHtml(player.name)}</strong><small>${hand.length} 张</small></span></div>
+      <div class="replay-hand">${hand.map(renderReplayCard).join("")}</div>
+    </section>
+  `;
+}
+
+function renderReplayCard(card) {
+  return `<div class="playing-card replay-card ${escapeHtml(card.color || "black")}" aria-label="${escapeHtml(card.rank + card.suit)}">${renderCardFace(card)}</div>`;
+}
+
+function formatHistoryDate(value) {
+  const date = new Date(Number(value) || Date.now());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${month}-${day} ${hour}:${minute}`;
 }
 
 function renderAvatarChoice(avatar, index) {
@@ -937,7 +1162,7 @@ async function enterRoom(payload) {
 }
 
 async function createRoom() {
-  const payload = await requestJson("/api/rooms", { profile });
+  const payload = await requestJson("/api/rooms", {});
   await enterRoom(payload);
 }
 
@@ -947,7 +1172,7 @@ async function joinRoom() {
   if (roomCode.length !== 6) {
     throw new Error("请输入 6 位房间号。");
   }
-  const payload = await requestJson(`/api/rooms/${encodeURIComponent(roomCode)}/join`, { profile });
+  const payload = await requestJson(`/api/rooms/${encodeURIComponent(roomCode)}/join`, {});
   await enterRoom(payload);
 }
 
@@ -961,8 +1186,70 @@ async function saveCurrentProfile() {
     render(state);
     return;
   }
-  saveProfile(profileDraft);
+  const nextProfile = normalizeProfile(profileDraft);
+  if (auth) {
+    const payload = await requestJson("/api/account/profile", { profile: nextProfile });
+    saveProfile(payload.account.profile);
+  } else {
+    saveProfile(nextProfile);
+  }
   profileEditorOpen = false;
+  render(currentState);
+}
+
+async function submitAuth() {
+  const username = String(app.querySelector("#auth-username")?.value || "").trim();
+  const password = String(app.querySelector("#auth-password")?.value || "");
+  const registering = authMode === "register";
+  if (registering) {
+    const confirmation = String(app.querySelector("#auth-password-confirm")?.value || "");
+    if (password !== confirmation) {
+      throw new Error("两次输入的密码不一致。");
+    }
+  }
+  const payload = await requestJson(registering ? "/api/auth/register" : "/api/auth/login", { username, password });
+  saveAuth(payload.auth);
+  saveProfile(payload.account.profile);
+  profileDraft = { ...profile };
+  clientNotice = "";
+  if (registering) {
+    profileEditorOpen = true;
+  }
+  render({ mode: "home" });
+}
+
+async function openHistory() {
+  if (!auth) {
+    throw new Error("请先登录账号。");
+  }
+  historyOpen = true;
+  historyLoading = true;
+  replayRecord = null;
+  replayStep = 0;
+  profileEditorOpen = false;
+  render(currentState);
+  try {
+    const payload = await requestJson("/api/account/history");
+    historyRecords = payload.records || [];
+  } finally {
+    historyLoading = false;
+  }
+  render(currentState);
+}
+
+function closeHistory() {
+  historyOpen = false;
+  historyLoading = false;
+  replayRecord = null;
+  replayStep = 0;
+  render(currentState);
+}
+
+async function openReplay(recordId) {
+  const payload = await requestJson(`/api/account/history/${encodeURIComponent(recordId)}`);
+  replayRecord = payload.record;
+  replayStep = 0;
+  historyLoading = false;
   render(currentState);
 }
 
@@ -983,6 +1270,58 @@ function bindEvents(state) {
     element.addEventListener("click", async () => {
       const action = element.dataset.action;
       try {
+        if (action === "auth-login" || action === "auth-register") {
+          authMode = action === "auth-register" ? "register" : "login";
+          clientNotice = "";
+          render({ mode: "auth" });
+          return;
+        }
+        if (action === "auth-submit") {
+          await submitAuth();
+          return;
+        }
+        if (action === "open-history") {
+          await openHistory();
+          return;
+        }
+        if (action === "close-history") {
+          closeHistory();
+          return;
+        }
+        if (action === "open-replay") {
+          await openReplay(element.dataset.recordId);
+          return;
+        }
+        if (action === "history-list") {
+          replayRecord = null;
+          replayStep = 0;
+          render(currentState);
+          return;
+        }
+        if (action === "replay-prev") {
+          replayStep = Math.max(0, replayStep - 1);
+          render(currentState);
+          return;
+        }
+        if (action === "replay-next") {
+          const total = Array.isArray(replayRecord && replayRecord.events) ? replayRecord.events.length : 0;
+          replayStep = Math.min(total, replayStep + 1);
+          render(currentState);
+          return;
+        }
+        if (action === "logout") {
+          if (auth) {
+            try {
+              await requestJson("/api/auth/logout", {});
+            } catch {
+              // Removing the local token is still the correct result when it already expired.
+            }
+          }
+          clearAuth();
+          clientNotice = "已退出登录。";
+          render({ mode: "auth" });
+          return;
+        }
         if (action === "open-profile") {
           openProfileEditor();
           return;
@@ -1104,6 +1443,14 @@ function bindEvents(state) {
       });
     });
   }
+
+  const replayProgress = app.querySelector("#replay-progress");
+  if (replayProgress) {
+    replayProgress.addEventListener("input", () => {
+      replayStep = Number(replayProgress.value) || 0;
+      render(currentState);
+    });
+  }
 }
 
 async function initialize() {
@@ -1112,6 +1459,22 @@ async function initialize() {
     clearSession();
     clientNotice = "";
     render(await soloApi("/api/start", {}));
+    return;
+  }
+
+  if (!auth) {
+    render({ mode: "auth" });
+    return;
+  }
+
+  try {
+    const identity = await requestJson("/api/auth/me");
+    saveProfile(identity.account.profile);
+    profileDraft = { ...profile };
+  } catch {
+    clearAuth();
+    clientNotice = "登录已失效，请重新登录。";
+    render({ mode: "auth" });
     return;
   }
 
