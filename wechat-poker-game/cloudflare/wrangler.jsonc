@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "four-player-poker-game",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "../preview/public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/runtime-config.js"]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "POKER_ROOM",
+        "class_name": "PokerRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PokerRoom"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

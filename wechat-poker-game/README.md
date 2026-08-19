@@ -66,6 +66,35 @@ docker run --rm -p 3000:3000 four-player-poker
 
 部署时请保持单个服务实例。当前房间状态存放在服务内存中，服务重启或扩容到多个独立实例会清空或分隔正在进行的房间；适合好友房试玩。若要长期正式运营，应将房间状态迁移到带持久状态的实时服务。
 
+### 发布到 Cloudflare Workers
+
+项目已包含独立的 Cloudflare Workers 版本。它会把网页静态资源部署到 Workers，并为每个六位房间号创建一个 Durable Object；房间状态会持久化，玩家通过 WebSocket 实时收到出牌、昵称和表情更新。
+
+在项目目录执行：
+
+```bash
+cd cloudflare
+npm install
+npm run check
+npm test
+npm run deploy
+```
+
+首次发布前如未登录 Cloudflare，先运行：
+
+```bash
+npx wrangler login
+```
+
+发布完成后，终端会输出一个 `https://...workers.dev` 公网网址。把该网址发给朋友，他们即可创建或输入房间号加入。要使用自己的域名，可在 Cloudflare 控制台的 `Workers & Pages` -> 对应 Worker -> `Settings` -> `Domains & Routes` 中添加自定义域名。
+
+Cloudflare 版本的房间会在连续 24 小时没有互动且没有连接时自动清理；它面向四人联机开房，因此首页不显示本地单人试玩入口。本地 Node 预览仍保留单人试玩和 SSE 同步。Cloudflare 部署配置在 `cloudflare/wrangler.jsonc`，本地模拟命令为：
+
+```bash
+cd cloudflare
+npm run dev -- --port 8787
+```
+
 ### 微信开发者工具
 
 1. 安装微信开发者工具。
@@ -83,6 +112,8 @@ docker run --rm -p 3000:3000 four-player-poker
 - `js/rules/custom_rules.js`：你后续指定正式规则后，主要改这里。
 - `preview/server.mjs`：本地侧栏网页预览服务。
 - `preview/room_service.mjs`：联网房间、身份校验和实时状态流服务。
+- `cloudflare/src/index.mjs`：Cloudflare Worker 与每个联网房间的 Durable Object。
+- `cloudflare/wrangler.jsonc`：Cloudflare 静态资源、WebSocket 和 Durable Object 部署配置。
 - `tests/poker_core.test.js`：核心流程和计分测试。
 - `tests/special_rules.test.js`：特殊规则和必须接牌测试。
 - `tests/room_server.test.mjs`：创建/加入房间、手牌隔离和实时状态流测试。

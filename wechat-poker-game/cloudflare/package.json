@@ -1,0 +1,16 @@
+{
+  "name": "four-player-poker-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "wrangler deploy --dry-run",
+    "dev": "wrangler dev --local",
+    "test": "vitest run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "latest",
+    "vitest": "latest",
+    "wrangler": "latest"
+  }
+}

@@ -26,6 +26,9 @@ const REACTIONS = [
 const AVATARS = ["😀", "😺", "🐼", "🦊", "🐸", "🐯", "🐰", "🦁", "🐻", "🐨", "🐵", "🐧"];
 const PROFILE_KEY = "four-poker-profile-v1";
 const SESSION_KEY = "four-poker-room-session-v1";
+const RUNTIME = window.__POKER_RUNTIME__ || {};
+const REALTIME_TRANSPORT = RUNTIME.transport === "websocket" ? "websocket" : "sse";
+const SUPPORTS_SOLO = RUNTIME.supportsSolo !== false;
 
 let currentState = null;
 let clientNotice = "";
@@ -36,6 +39,8 @@ let profileDraft = { ...profile };
 let session = loadSession();
 let eventSource = null;
 let eventSourceKey = "";
+let roomSocket = null;
+let socketReconnectTimer = null;
 let localReaction = null;
 let reactionTimer = null;
 let expiryTimer = null;
@@ -211,7 +216,7 @@ function renderHome() {
             <input id="join-room-code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="输入 6 位房间号" aria-label="房间号">
             <button class="join-room-button" data-action="join-room">加入</button>
           </div>
-          <button class="solo-entry" data-action="solo">单人试玩</button>
+          ${SUPPORTS_SOLO ? '<button class="solo-entry" data-action="solo">单人试玩</button>' : ""}
         </div>
         <p class="rule-note">单张、对子、三张、四张、四张顺子；有牌能接时必须接牌。</p>
       </section>
@@ -536,8 +541,15 @@ function syncRoomEvents(state) {
   if (eventSource && eventSourceKey === key) {
     return;
   }
+  if (roomSocket && eventSourceKey === key && (roomSocket.readyState === WebSocket.OPEN || roomSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
   stopRoomEvents();
   eventSourceKey = key;
+  if (REALTIME_TRANSPORT === "websocket") {
+    openRoomSocket(key);
+    return;
+  }
   eventSource = new EventSource(`${roomUrl("/events")}?token=${encodeURIComponent(session.token)}`);
   eventSource.addEventListener("state", (event) => {
     try {
@@ -557,7 +569,53 @@ function stopRoomEvents() {
     eventSource.close();
   }
   eventSource = null;
+  if (roomSocket) {
+    roomSocket.close();
+  }
+  roomSocket = null;
+  if (socketReconnectTimer) {
+    clearTimeout(socketReconnectTimer);
+    socketReconnectTimer = null;
+  }
   eventSourceKey = "";
+}
+
+function openRoomSocket(key) {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const url = new URL(`${roomUrl("/ws")}?token=${encodeURIComponent(session.token)}`, window.location.origin);
+  url.protocol = protocol;
+  const socket = new WebSocket(url);
+  roomSocket = socket;
+
+  socket.addEventListener("message", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload && payload.type === "state" && payload.state) {
+        clientNotice = "";
+        render(payload.state);
+      }
+    } catch {
+      // The next room state will replace an incomplete WebSocket payload.
+    }
+  });
+
+  socket.addEventListener("error", () => {
+    socket.close();
+  });
+
+  socket.addEventListener("close", () => {
+    if (roomSocket !== socket || eventSourceKey !== key) {
+      return;
+    }
+    roomSocket = null;
+    socketReconnectTimer = window.setTimeout(() => {
+      socketReconnectTimer = null;
+      if (eventSourceKey === key && currentState && currentState.mode === "room" && session) {
+        eventSourceKey = "";
+        syncRoomEvents(currentState);
+      }
+    }, 1000);
+  });
 }
 
 function scheduleReactionExpiry(state) {
