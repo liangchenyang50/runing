@@ -35,11 +35,7 @@ npm start
 
 ## Docker
 
-复制 `.env.example` 为 `.env` 后，将 `DATABASE_URL` 中的主机改为 `mysql`，并让密码与 `docker-compose.yml` 的 MySQL 密码保持一致：
-
-```text
-DATABASE_URL=mysql://poker_user:change_this_password@mysql:3306/four_player_poker
-```
+复制 `.env.example` 为 `.env` 后，分别填写 `MYSQL_PASSWORD` 与 `MYSQL_ROOT_PASSWORD` 两个强密码。Docker Compose 会自动让应用连接到内部的 `mysql` 服务，无需手动修改主机名。
 
 随后运行：
 
