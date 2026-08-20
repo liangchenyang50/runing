@@ -99,6 +99,21 @@ cd cloudflare
 npm run dev -- --port 8787
 ```
 
+### 部署到腾讯云中国大陆服务器
+
+Cloudflare 版本会保留不动。若希望中国大陆网络稳定访问，请使用项目的独立 Node 部署版：
+
+```bash
+cd node-server
+cp .env.example .env
+npm install
+npm start
+```
+
+此版本使用 WebSocket 同步多人房间，并将账号、昵称唯一性、头像资料与每个账号最近 5 局的回放记录保存到 MySQL。完整的 Docker、Nginx、数据库和腾讯云部署步骤见 [node-server/README.md](node-server/README.md)。
+
+中国大陆服务器上线前应完成域名 ICP 备案；部署后由 Nginx 提供 HTTPS，并将 WebSocket 路径反向代理到 Node 服务。进行中的房间保留在单个 Node 进程中，因此好友房版本应先运行单个应用实例。
+
 ### 微信开发者工具
 
 1. 安装微信开发者工具。

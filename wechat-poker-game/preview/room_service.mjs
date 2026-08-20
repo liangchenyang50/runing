@@ -851,12 +851,12 @@ export function createRoomService({ poker, rules, accountService, dismissalVoteM
     for (const listener of room.listeners) {
       const member = room.players.find((player) => player && player.token === listener.token)
         || room.spectators.get(listener.token);
-      if (!member || listener.res.writableEnded) {
+      if (!member || listener.res && listener.res.writableEnded) {
         room.listeners.delete(listener);
         continue;
       }
       try {
-        writeStateEvent(listener.res, viewRoom(room, member));
+        listener.send(viewRoom(room, member));
       } catch {
         room.listeners.delete(listener);
       }
@@ -913,8 +913,9 @@ export function createRoomService({ poker, rules, accountService, dismissalVoteM
       });
       res.flushHeaders?.();
       const listener = { res, token };
+      listener.send = (state) => writeStateEvent(res, state);
       room.listeners.add(listener);
-      writeStateEvent(res, viewRoom(room, member));
+      listener.send(viewRoom(room, member));
       req.on("close", () => {
         room.listeners.delete(listener);
       });
@@ -955,7 +956,26 @@ export function createRoomService({ poker, rules, accountService, dismissalVoteM
   return {
     handle,
     rooms,
-    viewRoom
+    viewRoom,
+    connectSocket(roomCode, token, socket) {
+      const room = getRoom(roomCode);
+      const member = getMember(room, token);
+      const listener = {
+        token,
+        send(state) {
+          if (socket.readyState !== 1) {
+            throw new Error("WebSocket 已关闭。");
+          }
+          socket.send(JSON.stringify({ type: "state", state }));
+        }
+      };
+      room.listeners.add(listener);
+      listener.send(viewRoom(room, member));
+      const close = () => room.listeners.delete(listener);
+      socket.once("close", close);
+      socket.once("error", close);
+      return close;
+    }
   };
 }
 

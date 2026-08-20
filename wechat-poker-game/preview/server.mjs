@@ -36,8 +36,8 @@ export function createPreviewApp(options = {}) {
   let state = null;
   let fourCardAlerts = [];
   let fourCardWarnedPlayerIds = new Set();
-  const accountService = createAccountService();
-  const roomService = createRoomService({ poker, rules, accountService, ...options });
+  const accountService = options.accountService || createAccountService();
+  const roomService = options.roomService || createRoomService({ poker, rules, accountService, ...options });
 
   function runAutoPlayers() {
     let guard = 0;
@@ -337,7 +337,8 @@ export function createPreviewApp(options = {}) {
     handle,
     viewState,
     startGame,
-    resetRound
+    resetRound,
+    roomService
   };
 }
 
