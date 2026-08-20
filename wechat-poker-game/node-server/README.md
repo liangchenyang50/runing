@@ -31,7 +31,7 @@ Get-Content .env | ForEach-Object {
 npm start
 ```
 
-访问 `http://127.0.0.1:3000`。生产服务默认监听 `0.0.0.0`，可供 Nginx 反向代理。
+访问 `http://127.0.0.1:3000`。Docker 生产配置将端口仅绑定到服务器本机，公网访问应始终经由 Nginx 的 HTTPS 域名。
 
 ## Docker
 
